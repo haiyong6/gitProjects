@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTD SQL Map 2.0//EN" "http://ibatis.apache.org/dtd/sql-map-2.dtd" >
+<sqlMap namespace="login">
+ 
+<select id="getUserInfo" resultClass="com.ways.auth.model.MyUserDetails" parameterClass="java.util.Map">
+	 select t.id as userId
+	    ,t.USER_NAME_CN as  userName
+	    ,t.USER_PASSWORD as  password
+	    ,t.USER_ID as loginId
+	    ,t.USER_GENDER as gender
+	    ,t.USER_MAIL as email
+	    ,g.GROUP_ID as corpUnitId
+	    ,g.GROUP_NAME_CN as corpUnitName
+	from wias_users t
+	    ,wias_users_group g
+	where 
+	    t.GRID = g.GROUP_ID
+	and upper(t.USER_ID) =  upper('$loginId$')
+</select>
+ 
+ 
+</sqlMap>

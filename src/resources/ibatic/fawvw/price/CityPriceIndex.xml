@@ -1,0 +1,2761 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTD SQL Map 2.0//EN" "http://ibatis.apache.org/dtd/sql-map-2.dtd" >
+<sqlMap namespace="cityPriceIndex">
+
+<!-- 初始化时间 当所选天为本月最后一天的前一天时，月份加1-->
+<select id="initDate" resultClass="java.util.HashMap">
+	<!--  with t1 as(
+	      select min(yearmonth) begindate,max(yearmonth) enddate from v_version_salespms_version_msrp v
+	 )
+	 select 
+	 	   <![CDATA[
+	       case 
+	            when g.sdate < t1.begindate then to_char(to_date(t1.begindate,'YYYY-MM'),'YYYY-MM') 
+	            else to_char(add_months(to_date(substr(g.sdate,0,6),'YYYY-MM'),1),'YYYY-MM') 
+	       end begindate,
+	       case
+            when g.edate > t1.enddate then            
+                 case when to_char(sysdate,'YYYYMMdd') >= to_char(last_day(add_months(to_date(t1.enddate,'YYYYMM'),1)),'YYYYMMDD')
+                           then to_char(add_months(to_date(t1.enddate, 'YYYY-MM'),1), 'YYYY-MM')
+                      else to_char(to_date(t1.enddate, 'YYYY-MM'), 'YYYY-MM')
+                 end
+            else           
+                 case when to_char(sysdate,'YYYYMMdd') >= to_char(last_day(add_months(to_date(t1.enddate,'YYYYMM'),1)),'YYYYMMDD')
+                           then to_char(add_months(to_date(substr(g.edate, 0, 6), 'YYYY-MM'),1), 'YYYY-MM')
+                      else to_char(to_date(substr(g.edate, 0, 6), 'YYYY-MM'), 'YYYY-MM')
+                 end
+           end enddate
+	       ]]>
+	       from wias_user_purchase_date g 
+	       full join t1 on 1=1
+	       where g.model='modelsaleamountanaly' and g.group_id=$userId$ -->
+	       select min(year) ||'-'|| '01' begindate, max(to_char(to_date(ym,'YYYY-MM'),'YYYY-MM')) enddate
+ 			 from fdm_version_state_price v
+ 			where v.week = '7'
+</select>
+
+<!-- 获取大区城市数据-->
+<resultMap class="com.ways.app.price.model.Area" id="getCityModalGroup1" groupBy="areaId">
+	<result property="areaId" column="areaid" nullValue="-" />
+	<result property="areaName" column="areaname" nullValue="-" />
+	<result property="citys" resultMap="submodelProfitGlobal.getCityModalGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.City" id="getCityModalGroup2">
+	<result property="cityId" column="cityid" nullValue="-" />
+	<result property="cityName" column="cityname" nullValue="-" />
+</resultMap>
+<select id="getCityModal" resultMap="getCityModalGroup1">
+	Select a.Area_Id      Areaid,
+	       a.Area_Name_Cn Areaname,
+	       c.City_Id      Cityid,
+	       c.City_Name_Cn Cityname
+	  From Fdm_Area_City p
+	 Inner Join Fdm_Area a On a.Area_Id = p.Area_Id
+	 Inner Join Fdm_City c On c.City_Id = p.City_Id
+	 Where a.Group_Id = $userId$
+	   And c.City_Id In (Select City_Id From Fdm_Model_City_Mix m
+	                      Where m.Year Between <!-- '$beginDate_TPMix$' And '$endDate_TPMix$' -->
+	                      '$beginDate_Mix$' And '$endDate_Mix$'
+	                      Group By City_Id)
+	    Or (c.City_Name_Cn Like '%长春%')
+	 Order By a.Area_Id, Decode(c.City_Name_Cn, '长春', 1, 0), c.City_Id
+	 
+</select>
+
+<!--指导价成交价改变时间  -->
+<select id="tpDate" resultClass="com.ways.app.price.model.InitialDate">
+<!-- 成交价 -->
+	<isEqual property="priceType" compareValue="1">
+	select max(year) ||'-'|| '01' begindate, max(to_char(to_date(ym,'YYYY-MM'),'YYYY-MM')) enddate
+  from faw_vw.fdm_version_state_price v
+ where v.week = '7'
+	</isEqual>
+	<!-- 指导价 -->
+	<isEqual property="priceType" compareValue="0">
+ select  substr(max(yearmonth),0,4) ||'-'||'01' begindate,max(to_char(to_date(yearmonth,'YYYY-MM'),'YYYY-MM')) enddate from pms_version_msrp v 
+	</isEqual>
+	
+</select>
+
+<!-- 根据对象类型获取当月在售的型号 -->
+<sql id="getVersionByObjectType">
+	select d.yearmonth,d.id version_id, d.versioncode,d.parentid,d.grandid,d.ancestryid,
+	d.submodelid, to_char(d.fzdy6,'YYYYMM') shangshidate,to_char(d.fzdy6,'YYYYMMDD') shangshidateDay,
+	to_char(startDate,'YYYYMM') startdate, to_char(d.fzdy6,'YYYY') launchdate 
+	      from (
+	           select <!-- distinct --> n.version_id id,
+                                  n.version_code versioncode,
+                                  n.parentid parentid,
+                                  n2.parentid grandid,
+                                  n3.parentid ancestryid,
+                                  n.submodel_id submodelid,
+                                  n.launch_Date fzdy6,
+                                  n.halt_no_sale_date gnstdate,
+                                  g.start_date startDate,
+                                  d.year || lpad(d.month, 2, 0) yearmonth,
+                                  b.body_type_id hatchback
+	                  from <!-- wias_info_grade -->v_faw_info_grade g
+	                   inner join v_faw_grade vg
+                      on g.GRADE_ID = vg.GRADE_ID
+	                   <!-- 加上同报告库一样取月报的条件 -->
+	                 <!--  inner join faw_vw.fdm_faw_report_version_month m on m.model_id=g.model_id -->
+	                  <!-- 此处由于时间原因，先暂时定死取型号往上追塑四代，原本是写递归往上追塑，考虑调整太多且时间不够，先用此临时方案 -->
+	                  inner join fdm_car_version n on  n.model_id = g.model_id
+	                  inner join fdm_car_brand pb
+                      on n.brand_id = pb.brand_id
+                   inner join fdm_car_orig o
+                      on pb.orig_id = o.orig_id
+                    left join fdm_car_version n2
+                      on n.parentid = n2.version_id
+                    left join fdm_car_version n3
+                      on n2.parentid = n3.version_id
+                   inner join FDM_FAW_BODY_TYPE b
+                      on n.submodel_id = b.submodel_id
+                    full join fdm_date_main d
+                      on 1 = 1
+	                  where <!-- g.group_id = $userId$ and --> b.group_id = $userId$ 
+	                  and vg.sub_grade_name != '0'
+	                  and g.MODEL_ID in (select model_id from faw_vw.fdm_faw_report_version_month)
+	                  		 and d.yearmonth between substr(replace('$beginDate$','-',''),0,4)||'01' and replace('$endDate$','-','')
+	                  		 <!-- 201603以后电动车（排量为0的不参与计算） -->
+	                  		 <!-- and 1 = case when d.year || lpad(d.month, 2, 0) >= 201603 and n.version_id in( select version_id from faw_vw.fdm_car_version where emissions_id =66) 
+                           then 0 else 1 end -->
+                           <!-- 用户级别调整，按新加字段start_date做过滤条件，在特定时间加进来才计算 -->
+                            and 1=case when d.year || lpad(d.month, 2, 0) >= to_char(g.start_date,'YYYYMM') then 1 else 0 end
+	                  		<!--  and n.is_installed_flag != 1 -->
+	                  		 <!-- 20161101上市的高尔夫嘉旅，12月之前不参与计算 -->
+                    and 1 = (case when n.submodel_id = 2168 and to_char(n.launch_date,'YYYYMMDD') = 20161101 
+                   <![CDATA[  and d.yearmonth < 201612 then 0 else 1 end)]]>
+	                  		 and
+	                  <isEqual property="objectType" compareValue="0">
+						<!-- 按细分市场 -->
+						 exists(
+						    select 1 from(
+						       select s.grade_id from v_faw_grade s where s.group_id = $userId$
+				       		<isNotEqual property="gradeId" compareValue="0">
+				       		  <isEqual property="allFlag" compareValue="true">
+								and s.parent_grade_id in($gradeId$)
+				       		  </isEqual>
+				       		  <isEqual property="allFlag" compareValue="false">
+				       		    and s.grade_id in($gradeId$)
+				       		  </isEqual>
+				       		</isNotEqual>
+				       			)where g.grade_id = grade_id
+						)
+				   </isEqual>
+				   <isEqual property="objectType" compareValue="1">
+						<!-- 按厂商 -->
+						<!-- <isNotEqual property="manfAll" compareValue="全部厂商"> -->n.manf_id||'~'||n.brand_id in($manfId$)<!-- </isNotEqual> -->
+						<!-- <isEqual property="manfAll" compareValue="全部厂商">1=1</isEqual> -->
+				   </isEqual>
+				   <isEqual property="objectType" compareValue="2">
+						<!-- 按品牌 -->
+						<!-- <isNotEqual property="brandAll" compareValue="全部品牌"> -->n.brand_id in($brandId$)<!-- </isNotEqual> -->
+						<!-- <isEqual property="brandAll" compareValue="全部品牌">1=1</isEqual> -->
+						<!-- n.pbrandid in($brandId$) -->
+						
+				   </isEqual>
+				   <isEqual property="objectType" compareValue="3">
+						<!-- 按子车型 -->
+						n.submodel_id in($subModelId$)
+				   </isEqual>
+				   <isEqual property="objectType" compareValue="4">
+				   		<isEqual property="origId" compareValue="0">
+		           			1 = 1
+		           		</isEqual>
+		           		<isNotEqual property="origId" compareValue="0">
+		           			<!-- 车系过滤条件 -->
+		           			o.orig_Id In($origId$)
+		           		</isNotEqual>
+		           </isEqual>
+				   <isNotEmpty property="bodyTypeId">
+	             		<!-- 车身形式过滤条件 -->
+	             		and b.body_type_id in($bodyTypeId$)
+		           </isNotEmpty>
+		          
+	      )d 
+       <!--上市日期<这个月最后一天，且停售日期>这个月第一天或为空 -->
+       <![CDATA[
+       where to_char(d.fzdy6,'YYYYMM') <= d.yearmonth and (to_char(d.gnstdate,'YYYYMM') >= d.yearmonth or d.gnstdate is null )
+       ]]>
+</sql>
+
+<!-- 获取参与计算指导价价格降幅的型号 -->
+<sql id="getVersionByMsrp">
+	with t1 as(
+		select 
+			 	a.version_id,a.parentid,a.grandid,a.ancestryid,a.submodelid,a.yearmonth,a.launchdate,nvl(round(b.version_sale,0), 0) sales,
+			 	 sum(nvl(round(b.version_sale,0), 0)) over(partition by a.yearmonth) totalSales
+			from(
+				<include refid="getVersionByObjectType" />
+			)a
+			inner join pms_version_msrp m on m.version_id = a.version_id and m.yearmonth = a.yearmonth
+			left join faw_vw.fdm_version_sales b on a.version_id = b.version_id and a.yearmonth =  to_char(add_months(to_date(( case when length(b.month)=1 then b.year||0||b.month else  b.year||b.month end ), 'YYYYMM'), +1), 'YYYYMM')
+	)
+	,t2 as(      
+		 <!-- 如果在同一个月存在上下代并存时,将上一代型号累加至新型号上 -->          
+		 select a.version_id,a.parentid,a.yearmonth,a.launchdate,to_char(a.sales + nvl(b.sales, 0) + nvl(c.sales, 0) + nvl(d.sales,0)) sales,a.totalsales,
+		        b.version_id delid,
+		        c.version_id delgrandid,
+		        d.version_id ancestryid
+		   from t1 a
+		   left join t1 b on a.parentid = b.version_id and a.yearmonth = b.yearmonth and a.submodelid = b.submodelid
+		   left join t1 c on a.grandid = c.version_id and a.yearmonth = c.yearmonth and a.submodelid = c.submodelid
+		   left join t1 d on a.ancestryid = d.version_id and a.yearmonth = d.yearmonth and a.submodelid = d.submodelid
+	 ) 
+   ,t3 as(        
+   		  <!-- 如果在同一个月存在上下代并存时,只取新一代型号 -->     
+		  select t.* from t2 t
+					 where not exists (
+					 					select 1
+					          				   from (select distinct t2.delid,t2.yearmonth from t2)
+					         				   where t.version_id = delid and t.yearmonth = yearmonth
+					         )
+					 and not exists (
+					 					select 1
+					          				   from (select distinct t2.delgrandid,t2.yearmonth from t2)
+					         				   where t.version_id = delgrandid and t.yearmonth = yearmonth
+					         )
+					 and not exists (
+					 					select 1
+					          				   from (select distinct t2.ancestryid,t2.yearmonth from t2)
+					         				   where t.version_id = ancestryid and t.yearmonth = yearmonth
+					         )
+   )
+</sql>
+
+<!-- 获取参与计算成交价价格降幅的型号 -->
+<sql id="getVersionByTp">
+	with t1 as(
+		select 
+			 	a.version_id, a.submodelid,a.versioncode,a.parentid,
+			 	to_char(fcv.halt_product_date,'YYYYMM') parentNoProductDate,
+			 	to_char(fcv.halt_no_sale_date, 'YYYYMM') parentNosaleDate,
+			 	a.startdate,
+			 	a.yearmonth, a.shangshidate,a.shangshidateDay, nvl(round(b.version_sale,0), 0) sales
+			 	<isEqual property="citySplit" compareValue="true">
+			 	,p.city_id cityid<!-- , -->
+			 		<!-- sum(nvl(round(b.version_sale,0), 0)) over(partition by p.ym,p.city_id)  -->
+			 	</isEqual>
+			 	<!-- 
+			 	<isNotEqual property="citySplit" compareValue="true">
+			 	sum(nvl(round(b.version_sale,0), 0)) over(partition by a.yearmonth) 
+			 	</isNotEqual>
+			 	totalSales -->
+			from(
+				<include refid="getVersionByObjectType" />
+			)a
+			
+			<isEqual property="cityIds" compareValue="0">
+			inner join faw_vw.fdm_version_state_price p on a.version_id =  p.version_id and a.yearmonth = p.ym and p.week=7
+			 and p.price_fawvw is not null
+			 </isEqual>
+			  <isNotEqual property="cityIds" compareValue="0">
+			 	<isEqual property="citySplit" compareValue="true">
+			inner join  faw_vw.fdm_version_city_price p on a.version_id = p.version_id 
+				 and a.yearmonth = p.ym
+			     and p.week = 7
+			     and p.price_fawvw is not null
+			     and p.city_id in ($cityIds$)
+			     </isEqual>
+			 </isNotEqual>
+			left join faw_vw.fdm_version_sales b on a.version_id = b.version_id and a.yearmonth =  to_char(add_months(to_date(( case when length(b.month)=1 then b.year||0||b.month else  b.year||b.month end ), 'YYYYMM'), +1), 'YYYYMM')
+			 <isNotEqual property="cityIds" compareValue="0">
+			 	<isNotEqual property="citySplit" compareValue="true">
+			<!-- where exists (select 1 from faw_vw.fdm_version_city_price p where a.version_id = p.version_id 
+				 and a.yearmonth = p.ym
+			     and p.week = 7
+			     and p.price_fawvw is not null
+			     and p.city_id in ($cityIds$)) -->
+			      inner join (select distinct p.version_id,p.ym yearmonth
+            from faw_vw.fdm_version_city_price p
+           where <!-- a.version_id = p.version_id
+             and a.yearmonth = p.ym -->
+             p.ym between substr(replace('$beginDate$','-',''),0,4)||'01' and replace('$endDate$','-','')
+             and p.week = 7
+             and p.price_fawvw is not null
+             and p.city_id in ($cityIds$)) y
+             on a.version_id = y.version_id 
+             and a.yearmonth = y.yearmonth
+			     </isNotEqual>
+			 </isNotEqual>
+			 left join faw_vw.fdm_car_version fcv on fcv.version_id = a.parentid
+	)
+</sql>
+
+
+<!-- 获取型号信息公共SQL，作用于导出 -->
+<sql id="getVersionInfo">
+	select distinct v.version_id versionid,
+                  v.version_name_cn versionName,
+                  v.version_code versioncode,
+                  v.year modelyear,
+                  to_char(v.launch_date, 'YYYY-MM-DD') versionLaunchDate,
+                  v.version_trim_name_cn typeid,
+                  v.version_trim_name_en typeiden,
+                  s.manf_name_cn manfname,
+                  upper(getLetter(substr(s.manf_name_cn, 0, 1))) manfletter,
+                  s.manf_name_en manfnameen,
+                  b.submodel_name_cn submodelname,
+                  b.submodel_name_en submodelnameen,
+                  pl.EMISSIONS_NAME discharge,
+                  pd.TRNSMS_NAME_CN gearmode,
+	       <!-- 如果是大众和奥迪品牌的型号，需要将DCT转换为DSG -->
+	       case
+                    when v.brand_id in (6, 31) and pd.TRNSMS_NAME_eN = 'DCT' then
+                     'DSG'
+                    else
+                     pd.TRNSMS_NAME_eN
+                  end gearmodeen,
+                  cs.BODY_TYPE_NAME_CN bodytype,
+                  cs.BODY_TYPE_NAME_eN bodytypeen,
+                  wg.parent_grade_name,
+                  wg.GRADE_NAME_EN,
+                  wg.sub_grade_name,
+                  wg.parent_grade_name || ' ' || wg.GRADE_NAME_CN || '-' ||
+                  wg.sub_grade_name gradename,
+                  wg.parent_grade_name || ' ' || wg.GRADE_NAME_eN || '-' ||
+                  wg.sub_grade_name gradenameen
+	        from fdm_car_version v
+	inner join t1 on t1.version_id = v.version_id
+   inner join fdm_car_submodel b
+      on b.submodel_id = v.submodel_id
+   inner join FDM_FAW_BODY_TYPE h
+      on b.submodel_id = h.submodel_id
+   inner join fdm_ways_body_type cs
+      on cs.BODY_TYPE_ID = h.BODY_TYPE_ID
+   inner join fdm_car_manf s
+      on s.manf_id = v.manf_id
+   inner join fdm_car_emissions pl
+      on pl.emissions_id = v.EMISSIONS_ID
+   inner join fdm_car_transmission pd
+      on pd.TRNSMS_ID = v.TRNSMS_ID
+   inner join v_faw_info_grade g
+      on g.model_id = b.model_id
+   inner join faw_vw.fdm_faw_report_version_month m
+      on m.model_id = g.model_id
+   inner join v_faw_grade wg
+      on wg.grade_id = g.grade_id
+     and wg.group_id = 2
+</sql>
+
+<!-- 城市基期TP重新加权 -->
+	<sql id="cityBaseTp">
+		cityBaseTp as (
+           select distinct e.vid version_id,
+                  e.year year,
+                  Case
+                    When Max(e.MaxCityMix)
+                     over(partition by e.vid, e.year) Is Not Null Then
+                     Sum(e.Mix) Over(Partition By e.Vid, e.Year)
+                    Else
+                     Avg(e.minTp)
+                     Over(Partition By e.vid, e.year)
+                  End tp
+    from (select d.vid,
+                 d.year,
+                 case
+                   when min(d.value) is not null then
+                    to_char(min(d.tp) * ratio_to_report(sum(d.value))
+                            over(partition by d.vid, d.year))
+                   else
+                    null
+                 end mix,
+                 Min(d.tp) minTP,
+                 Max(d.value) maxCityMix
+            From (select b.version_id vid,
+                         p.year Year,
+                         p.tp tp,
+                         p.cityid region,
+                         m.value,
+                         b.submodelid as sub_model_id,
+                         row_number() over(partition by b.version_id, p.Cityid, p.Year Order By b.version_id Desc) rn
+                    From fdm_car_city_BasePeriodTP p
+                   inner join t1 b
+                      on b.versioncode = p.versioncode
+                    left join Fdm_Model_City_Mix m
+                      on m.Sub_Model_Id = b.Submodelid
+                     and m.City_Id = p.CityId
+                      <![CDATA[
+                     and m.year = (CASE
+                           WHEN p.Year <= 2013 THEN
+                            2013
+                           ELSE
+                            p.Year - 1
+                         END)
+                         ]]>
+                   where 1 = 1
+                     And P.year between substr(replace('$beginDate$','-',''),0,4) and
+                         substr(Replace('$endDate$', '-', ''),0,4)
+                     and p.CityId in ($cityIds$)
+                     and p.tp is not null
+                     and p.tp != 0.00) d
+           where d.rn = 1
+           group by d.vid, d.year, d.region) e
+           ),
+	</sql>
+
+<!-- 导出区域价格降幅原始数据 -->
+<select id="exportCityPriceIndexOriginalData" resultClass="com.ways.app.price.model.VersionCityPriceIndexInfo">
+		<isEqual property="priceType" compareValue="0">
+			<!-- 指导价算法 -->
+			<include refid="getVersionByMsrp"/>
+			,t4 as(
+				<include refid="getVersionInfo"/>
+			)
+			 select t3.yearmonth,t4.*,m.msrp price,m.datummsrp datumprice,c.cv_value cvDifference,t3.sales,t3.totalsales,
+					<isEqual property="equipageType" compareValue="0">
+							<!-- 不含装备 -->
+							case when t3.totalsales != 0 then to_char( (m.msrp / m.datummsrp) * (t3.sales / t3.totalsales) ,'fm99999990.0000000000') 
+								 else '-'
+						    end priceIndex
+					</isEqual> 
+					<isEqual property="equipageType" compareValue="1">
+							<!-- 含装备 -->
+							case when t3.totalsales != 0 then to_char( ( (m.msrp + nvl(c.cv_value,0) ) / m.datummsrp) * (t3.sales / t3.totalsales),'fm99999990.0000000000') 
+								 else '-'
+							end priceIndex
+					</isEqual> 
+					from t3
+					inner join t4 on t3.version_id = t4.versionId
+					inner join pms_version_msrp m on m.version_id = t3.version_id and m.yearmonth = t3.yearmonth
+					<!-- 获取CV差，需要判断型号上市日期年份是否属于时间段 -->
+					left join cims_version_config_cv c on c.versionid = t3.version_id and c.year_month = t3.yearmonth and t3.launchdate >= substr('$beginDate$',0,4)
+					order by t3.yearmonth asc,
+					<!-- t4.grade_order asc, -->
+					t4.parent_grade_name,<!-- 级别大类 -->
+          t4.GRADE_NAME_EN,<!-- 级别 -->
+         t4.sub_grade_name,<!-- 级别小类 -->
+					t4.manfletter asc,t4.submodelname asc,t4.modelyear desc
+	</isEqual>
+	
+	<isEqual property="priceType" compareValue="1">
+			<!-- 成交价算法 -->
+			<include refid="getVersionByTp"/>
+			,t2 as(
+				<include refid="getVersionInfo"/>
+			)
+			
+			<!-- 非全国均价下各城市加权mix取成交价 -->
+			<isNotEqual property="cityIds" compareValue="0">
+				<isNotEqual property="citySplit" compareValue="true">
+					<!-- 城市不拆分，重新加权城市基期TP -->
+					,<include refid="cityBaseTp"/>
+			t3 as
+  (
+  select version_id ,ym ,week,round(price_fawvw) price_fawvw from (
+     select distinct e.vid version_id,
+                  e.yearmonth ym,
+                  e.week,
+                  Case
+                    When Max(e.MaxCityMix)
+                     over(partition by e.vid, e.yearmonth, e.week) Is Not Null Then
+                     Sum(e.Mix) Over(Partition By e.Vid, e.Yearmonth, e.week)
+                    Else
+                     Avg(e.minTp)
+                     Over(Partition By e.vid, e.yearmonth, e.week)
+                  End price_fawvw
+    from (select d.vid,
+                 d.yearmonth,
+                 d.week,
+                 case
+                   when min(d.value) is not null then
+                    to_char(min(d.tp) * ratio_to_report(sum(d.value))
+                            over(partition by d.vid, d.yearmonth, d.week))
+                   else
+                    null
+                 end mix,
+                 Min(d.tp) minTP,
+                 Max(d.value) maxCityMix
+            From (select b.version_id vid,
+                         p.ym Yearmonth,
+                         p.week,
+                         p.price_fawvw tp,
+                         p.city_id region,
+                         m.value,
+                         b.submodelid as sub_model_id,
+                         row_number() over(partition by b.version_id, p.City_id, p.Ym, p.Week Order By b.version_id Desc) rn
+                    From Fdm_Version_City_Price p
+                   inner join t1 b
+                      on b.version_id = p.Version_Id
+                    left join Fdm_Model_City_Mix m
+                      on m.Sub_Model_Id = b.Submodelid
+                     and m.City_Id = p.City_Id
+                    <![CDATA[ and m.year = (CASE
+                           WHEN p.Year <= 2013 THEN
+                            2013
+                           ELSE
+                            p.Year - 1
+                         END)
+                   where 1 = 1  ]]>
+                     And P.ym between Replace('$beginDate$', '-', '') and
+                         Replace('$endDate$', '-', '')
+                     and p.Week = '7'
+                     and p.City_Id in ($cityIds$)
+                     and p.price_fawvw is not null
+                     and p.price_fawvw != 0.00
+                     ) d
+           where d.rn = 1
+           group by d.vid, d.yearmonth, d.week, d.region) e)
+  )
+  		</isNotEqual>
+  		<isEqual property="citySplit" compareValue="true">
+  			,t3 as
+ (select d.vid           version_id,
+         d.yearmonth     ym,
+         d.week,
+         d.tp            price_fawvw,
+         d.cityId        cityid,
+         fc.city_name_cn cityname,
+         fc.city_name_en citynameen
+    from (Select b.version_id Vid,
+                 p.Ym Yearmonth,
+                 p.Week,
+                 round(p.price_fawvw) tp,
+                 p.City_Id Cityid,
+                 Row_Number() Over(Partition By b.version_id, p.City_Id, p.Ym, p.Week Order By b.version_id Desc) Rn
+            From Fdm_Version_City_Price p
+           Inner Join t1 b
+              On b.version_id = p.Version_Id
+              and b.cityid=p.city_id
+           Where p.City_Id In ($cityIds$)
+             And p.price_fawvw Is Not Null
+             And P.ym between Replace('$beginDate$', '-', '') and
+                 Replace('$endDate$', '-', '')
+             and p.Week = '7') d
+    left join fdm_city fc
+      on d.cityid = fc.city_id
+   where d.rn = 1)
+  		</isEqual>
+  
+  </isNotEqual>
+			select t1.yearmonth,t2.*,
+			<isEqual property="citySplit" compareValue="true">
+			p.cityid,
+       		p.cityname,
+       		p.citynameen,
+       		</isEqual>
+       		<isNotEqual property="citySplit" compareValue="true">
+       		null cityid,
+       		null cityName,
+       		null citynameen,
+       		</isNotEqual>
+			p.price_fawvw price,
+			<!-- 14年之前用现在的系统逻辑，之后的用国辉那边维护的基期数据直接取值 -->
+			case when   (select min(year) from faw_vw.fdm_car_BasePeriodTP) > substr(to_char(t1.yearmonth),0,4)
+                                      then
+       (select p.price_fawvw
+                                         from faw_vw.fdm_version_state_price p
+                                        where p.Ym = (case
+                                                when (select count(p.price_fawvw)
+                                                        from faw_vw.fdm_version_state_price p
+                                                       where p.Ym =
+                                                             (select (substr(t1.yearmonth,0,4)) - 1 || 12
+                                                                from dual)
+                                                         and t1.version_id =
+                                                             p.version_id
+                                                         and t1.totalsales > 0
+                                                         and p.week = 7) > 0 then
+                                                 (select (substr(t1.yearmonth,0,4)) - 1 || 12
+                                                    from dual)
+                                                else
+                                                <!-- 20160320上市的车型宝来，直接取上市月作为基期TP -->
+                                                  (case
+                                                   when p.version_id in
+                                                        (select version_id from fdm_car_version where submodel_id = '431' and to_char(launch_date,'YYYYMMDD') =20160320)
+                                                         then to_char(to_date(t1.shangshidate,'YYYYMM'),'YYYYMM')
+                                                    <!-- 20160727上市的车型新代迈腾，直接取上市月作为基期TP -->
+                                                    when p.version_id in
+                                                      (select version_id from fdm_car_version where submodel_id = '698'  and to_char(launch_date,'YYYYMMDD') =20160727)
+                                                       then to_char(to_date(t1.shangshidate,'YYYYMM'),'YYYYMM')
+                                                     <!-- 20160506上市的车型高尔夫嘉旅，直接取上市月作为基期TP -->
+                                                     when p.version_id in
+                                                      (select version_id from fdm_car_version where submodel_id = '2168' and to_char(launch_date,'YYYYMMDD') =20160506)
+                                                       then to_char(to_date(t1.shangshidate,'YYYYMM'),'YYYYMM')
+                                                   else
+                                                    to_char(add_months(to_date(t1.shangshidate,'YYYYMM'),+1),'YYYYMM')
+                                                 end)
+                                              end)
+                                          and t1.version_id = p.version_id
+                                          and t1.totalsales > 0
+                                          and p.week = 7)
+                                           else
+                                           <!-- 基期TP -->
+                                           <isNotEqual property="cityIds" compareValue="0">
+                                           		<isNotEqual property="citySplit" compareValue="true">
+                                           			(select tp.tp from cityBaseTp tp where tp.version_id = t1.version_id
+					                                      and tp.year = substr(to_char(t1.yearmonth), 0, 4))
+                                           		</isNotEqual>
+                                           		<isEqual property="citySplit" compareValue="true">
+                                           			 (select tp.tp from faw_vw.fdm_car_city_BasePeriodTP tp
+					                                      where tp.versioncode = t1.versioncode
+					                                      and tp.cityid = t1.cityid
+					                                        and tp.year = substr(to_char(t1.yearmonth), 0, 4))
+                                           		</isEqual>
+                                           </isNotEqual>
+                                           <isEqual property="cityIds" compareValue="0">
+	                                           (select tp.tp from faw_vw.fdm_car_BasePeriodTP tp 
+	                                            where tp.versioncode=t1.versioncode and tp.year=substr(to_char(t1.yearmonth),0,4))
+                                           </isEqual> 
+                                            end
+                                            datumprice,t1.sales,'0' cvDifference,
+				   t1.totalsales,
+				   case when t1.totalsales != 0 and 
+				    	<!-- 基期TP -->
+                         <isNotEqual property="cityIds" compareValue="0">
+                         		<isNotEqual property="citySplit" compareValue="true">
+                         			(select tp.tp from cityBaseTp tp where tp.version_id = t1.version_id
+                         and tp.year = substr(to_char(t1.yearmonth), 0, 4))
+                         		</isNotEqual>
+                         		<isEqual property="citySplit" compareValue="true">
+                         			 (select tp.tp from faw_vw.fdm_car_city_BasePeriodTP tp
+                         where tp.versioncode = t1.versioncode
+                         and tp.cityid = t1.cityid
+                           and tp.year = substr(to_char(t1.yearmonth), 0, 4))
+                         		</isEqual>
+                         </isNotEqual>
+                         <isEqual property="cityIds" compareValue="0">
+                          (select tp.tp from faw_vw.fdm_car_BasePeriodTP tp 
+                           where tp.versioncode=t1.versioncode and tp.year=substr(to_char(t1.yearmonth),0,4))
+                         </isEqual> 
+                         is not null
+				    then  to_char((p.price_fawvw /
+				   <!-- 14年之前用现在的系统逻辑，之后的用国辉那边维护的基期数据直接取值 -->
+				   					 case when (select min(year) from faw_vw.fdm_car_BasePeriodTP) > substr(to_char(t1.yearmonth),0,4)
+                                      then
+                                     (select p.price_fawvw
+                                         from faw_vw.fdm_version_state_price p
+                                        where p.Ym = (case
+                                                when (select count(p.price_fawvw)
+                                                        from faw_vw.fdm_version_state_price p
+                                                       where p.Ym =
+                                                             (select (substr(t1.yearmonth,0,4)) - 1 || 12
+                                                                from dual)
+                                                         and t1.version_id =
+                                                             p.version_id
+                                                         and t1.totalsales > 0
+                                                         and p.week = 7) > 0 then
+                                                 (select (substr(t1.yearmonth,0,4)) - 1 || 12
+                                                    from dual)
+                                                else
+                                                <!-- 20160320上市的车型宝来，直接取上市月作为基期TP -->
+                                                  (case
+                                                   when p.version_id in
+                                                        (select version_id from fdm_car_version where submodel_id = '431' and to_char(launch_date,'YYYYMMDD') =20160320)
+                                                         then to_char(to_date(t1.shangshidate,'YYYYMM'),'YYYYMM')
+                                                    <!-- 20160727上市的车型新代迈腾，直接取上市月作为基期TP -->
+                                                    when p.version_id in
+                                                      (select version_id from fdm_car_version where submodel_id = '698'  and to_char(launch_Date,'YYYYMMDD') =20160727)
+                                                       then to_char(to_date(t1.shangshidate,'YYYYMM'),'YYYYMM')
+                                                     <!-- 20160506上市的车型高尔夫嘉旅，直接取上市月作为基期TP -->
+                                                     when p.version_id in
+                                                      (select version_id from fdm_car_version where submodel_id = '2168' and to_char(launch_date,'YYYYMMDD') =20160506)
+                                                       then to_char(to_date(t1.shangshidate,'YYYYMM'),'YYYYMM')
+                                                   else
+                                                    to_char(add_months(to_date(t1.shangshidate,'YYYYMM'),+1),'YYYYMM')
+                                                 end)
+                                              end)
+                                          and t1.version_id = p.version_id
+                                          and t1.totalsales > 0
+                                          and p.week = 7)
+                                           else 
+                                             <!-- 基期TP -->
+                                           <isNotEqual property="cityIds" compareValue="0">
+                                           		<isNotEqual property="citySplit" compareValue="true">
+                                           			(select tp.tp from cityBaseTp tp where tp.version_id = t1.version_id
+					                                      and tp.year = substr(to_char(t1.yearmonth), 0, 4))
+                                           		</isNotEqual>
+                                           		<isEqual property="citySplit" compareValue="true">
+                                           			 (select tp.tp from faw_vw.fdm_car_city_BasePeriodTP tp
+					                                      where tp.versioncode = t1.versioncode
+					                                      and tp.cityid = t1.cityid
+					                                        and tp.year = substr(to_char(t1.yearmonth), 0, 4))
+                                           		</isEqual>
+                                           </isNotEqual>
+                                           <isEqual property="cityIds" compareValue="0">
+	                                           (select tp.tp from faw_vw.fdm_car_BasePeriodTP tp 
+	                                            where tp.versioncode=t1.versioncode and tp.year=substr(to_char(t1.yearmonth),0,4))
+                                           </isEqual> 
+                                            end
+                                          ) *
+                                     (t1.sales / t1.totalSales),'fm99999990.0000000000')
+				        else '-'
+				   end priceindex
+				   from t1
+				   inner join t2 on t1.version_id = t2.versionId
+				   inner join 
+				   <isEqual property="cityIds" compareValue="0">
+				   <!-- 全国均价 -->
+				   faw_vw.fdm_version_state_price 
+				   </isEqual>
+				   <isNotEqual property="cityIds" compareValue="0">
+				   	t3
+				   </isNotEqual>
+				   p on t1.version_id = p.version_id and t1.yearmonth = p.ym and p.week=7
+				   <isEqual property="citySplit" compareValue="true">
+				   and p.cityid = t1.cityid
+				   </isEqual>
+				   order by t1.yearmonth asc,
+				    t2.parent_grade_name,
+         t2.GRADE_NAME_EN,
+         t2.sub_grade_name,
+         <isEqual property="citySplit" compareValue="true">
+          p.cityid,
+         </isEqual>
+				   t2.manfletter asc,t2.submodelname asc,t2.modelyear desc
+	</isEqual>
+</select>
+
+<!-- 获取价格降幅分析数据 -->
+<select id="getCityPriceIndexAnalyseData" resultClass="com.ways.app.price.model.CityPriceIndexEntity">
+
+	<isEqual property="priceType" compareValue="0">
+			<!-- 指导价算法 -->
+			<include refid="getVersionByMsrp"/>
+			select a.yearmonth,nvl(b.value,'-')value 
+					from (
+						select t.year || lpad(t.month_id,2,0) yearmonth 
+       						   from pms_date_main t 
+       						   <isEqual property="multiType" compareValue="1">
+       						   		<!-- 时间多选 -->
+       						   		where t.year || lpad(t.month_id,2,0) between substr('$beginDate$',0,4) || '01' and substr('$beginDate$',0,4) || '12'
+       						   </isEqual>
+       						   <isNotEqual property="multiType" compareValue="1">
+       						   		<!-- 对象多选 -->
+	       						    where t.year || lpad(t.month_id,2,0) between '$beginDate$' and '$endDate$'
+       						   </isNotEqual>
+					)a
+					left join(
+						 select d.yearmonth,to_char(sum(d.value) * 100,'fm99999990.00') value 
+								from(
+									select t3.yearmonth,
+										   <isEqual property="equipageType" compareValue="0">
+										   		<!-- 不含装备 -->
+										   		to_char( (m.msrp / m.datummsrp) * (t3.sales / t3.totalsales) ) value
+										   </isEqual> 
+										   <isEqual property="equipageType" compareValue="1">
+										   		<!-- 含装备 如果型号上市的年份在时间段内才加上CV差，否则不添加 -->
+										   		case when t3.launchdate >= substr('$beginDate$',0,4) then
+										   				  to_char( ( (m.msrp + nvl(c.cv_value,0) ) / m.datummsrp) * (t3.sales / t3.totalsales) )
+										   			 else to_char( (m.msrp / m.datummsrp) * (t3.sales / t3.totalsales) )
+										   	   end value
+										   </isEqual> 
+										   from t3
+										   inner join pms_version_msrp m on m.version_id = t3.version_id and m.yearmonth = t3.yearmonth
+										   left join cims_version_config_cv c on c.versionid = t3.version_id and c.year_month = t3.yearmonth
+										   where t3.totalsales > 0
+								)d group by d.yearmonth
+					)b on a.yearmonth = b.yearmonth
+					order by a.yearmonth asc
+	</isEqual>
+	
+	<isEqual property="priceType" compareValue="1">
+			<!-- 成交价算法 -->
+			<include refid="getVersionByTp"/>
+			
+			<!-- 非城市全选时各城市加权mix取成交价 -->
+			<isNotEqual property="cityIds" compareValue="0">
+			
+				<isNotEqual property="citySplit" compareValue="true">
+					,<include refid="cityBaseTp"/>
+			 t2 as
+  (
+     select distinct e.vid version_id,
+                  e.yearmonth ym,
+                  e.week,
+                  Case
+                    When Max(e.MaxCityMix)
+                     over(partition by e.vid, e.yearmonth, e.week) Is Not Null Then
+                     Sum(e.Mix) Over(Partition By e.Vid, e.Yearmonth, e.week)
+                    Else
+                     Avg(e.minTp)
+                     Over(Partition By e.vid, e.yearmonth, e.week)
+                  End price_fawvw
+    from (select d.vid,
+                 d.yearmonth,
+                 d.week,
+                 case
+                   when min(d.value) is not null then
+                    to_char(min(d.tp) * ratio_to_report(sum(d.value))
+                            over(partition by d.vid, d.yearmonth, d.week))
+                   else
+                    null
+                 end mix,
+                 Min(d.tp) minTP,
+                 Max(d.value) maxCityMix
+            From (select b.version_id vid,
+                         p.ym Yearmonth,
+                         p.week,
+                         p.price_fawvw tp,
+                         p.city_id region,
+                         m.value,
+                         b.submodelid as sub_model_id,
+                         row_number() over(partition by b.version_id, p.City_id, p.Ym, p.Week Order By b.version_id Desc) rn
+                    From Fdm_Version_City_Price p
+                   inner join t1 b
+                      on b.version_id = p.Version_Id
+                    left join Fdm_Model_City_Mix m
+                  <![CDATA[    on m.Sub_Model_Id = b.Submodelid
+                     and m.City_Id = p.City_Id
+                     and m.year = (CASE
+                           WHEN p.Year <= 2013 THEN
+                            2013
+                           ELSE
+                            p.Year - 1
+                         END)
+                   where 1 = 1 ]]>
+                     And P.ym between Replace('$beginDate$', '-', '') and
+                         Replace('$endDate$', '-', '')
+                     and p.Week = '7'
+                     and p.City_Id in ($cityIds$)
+                     and p.price_fawvw is not null
+                     and p.price_fawvw != 0.00
+                    
+                     ) d
+           where d.rn = 1
+           group by d.vid, d.yearmonth, d.week, d.region) e
+  ) 		
+  				</isNotEqual>
+  				<!-- 城市拆分则显示城市 -->
+  				<isEqual property="citySplit" compareValue="true">
+		  					,t2 as
+		 (select d.vid       version_id,
+		         d.yearmonth ym,
+		         d.week,
+		         d.tp        price_fawvw,
+		         d.cityId    cityid,
+		         fc.city_name_cn cityname,
+		         fc.city_name_en citynameen
+		    from (Select b.version_id Vid,
+		                 p.Ym Yearmonth,
+		                 p.Week,
+		                 p.price_fawvw tp,
+		                 p.City_Id Cityid,
+		                 Row_Number() Over(Partition By b.version_id, p.City_Id, p.Ym, p.Week Order By b.version_id Desc) Rn
+		            From Fdm_Version_City_Price p
+		           Inner Join t1 b
+		              On b.version_id = p.Version_Id
+		              and b.cityid=p.city_id
+		           Where p.City_Id In ($cityIds$)
+		             And p.price_fawvw Is Not Null
+		             And P.ym between Replace('$beginDate$', '-', '') and
+		                 Replace('$endDate$', '-', '')
+		             and p.Week = '7') d
+		             left join fdm_city fc on d.cityid=fc.city_id
+		   where d.rn = 1)
+  				</isEqual>
+  		</isNotEqual>
+			select a.yearmonth,nvl(b.value,'-') value 
+					<isEqual property="citySplit" compareValue="true">
+               			, a.cityid,
+               			 a.cityname
+               		</isEqual>
+               		<isNotEqual property="citySplit" compareValue="true">
+               			,null cityid
+               			,null cityname
+               		</isNotEqual>
+					from (
+					<isNotEqual property="citySplit" compareValue="true">
+						select t.year || lpad(t.month,2,0) yearmonth 
+       						   from fdm_date_main t 
+       						   <isEqual property="multiType" compareValue="1">
+       						   		<!-- 时间多选 -->
+       						   		where t.year || lpad(t.month,2,0) between substr('$beginDate$',0,4) || '01' and substr('$beginDate$',0,4) || '12'
+       						   </isEqual>
+       						   <isNotEqual property="multiType" compareValue="1">
+       						   		<!-- 对象多选 -->
+	       						    where t.year || lpad(t.month,2,0) between '$beginDate$' and '$endDate$'
+       						   </isNotEqual>
+       				 </isNotEqual>
+       				<isEqual property="citySplit" compareValue="true">
+       					select t.year || lpad(t.month,2,0) yearmonth ,f.city_id cityid,f.city_name_cn cityname
+       						   from fdm_date_main t , fdm_city f 
+       						   <isEqual property="multiType" compareValue="1">
+       						   		<!-- 时间多选 -->
+       						   		where t.year || lpad(t.month,2,0) between substr('$beginDate$',0,4) || '01' and substr('$beginDate$',0,4) || '12'
+       						   </isEqual>
+       						   <isNotEqual property="multiType" compareValue="1">
+       						   		<!-- 对象多选 -->
+	       						    where t.year || lpad(t.month,2,0) between '$beginDate$' and '$endDate$'
+       						   </isNotEqual>
+       						   and f.city_id in  ($cityIds$)
+       				</isEqual>		   
+					)a
+					,(
+						select d.yearmonth,
+						<isEqual property="citySplit" compareValue="true">
+               			d.cityid,
+               			d.cityname,
+               			d.citynameen,
+               		</isEqual>
+                    to_char(sum(value) * 100, 'fm99999990.00') value
+                    
+               from (
+               (select t1.yearmonth,
+               		<isEqual property="citySplit" compareValue="true">
+               			p.cityid,
+               			p.cityname,
+               			p.citynameen,
+               		</isEqual>
+                            to_char((p.price_fawvw /
+                            <!-- 14年之前用现在的系统逻辑，之后的用国辉那边维护的基期数据直接取值 -->
+                            case when (select min(year) from faw_vw.fdm_car_BasePeriodTP) > substr(to_char(t1.yearmonth),0,4)
+                                      then
+                            (select p.price_fawvw  from  faw_vw.fdm_version_state_price p where p.Ym=(
+                            <!-- 判断是否有上年12月成交价，有的话用上年12月末成交价做基期。没有的话用该型号的最早的成交价（上市月份加一个月 末的成交价当基期） -->
+                            case when 
+               (select count(p.price_fawvw)  from  faw_vw.fdm_version_state_price p where p.Ym=(select (substr(t1.yearmonth,0,4))-1||12 from dual)
+                            and t1.version_id = p.version_id
+                      
+                       and t1.totalsales > 0
+                           and p.week=7
+                            )>0 then (select (substr(t1.yearmonth,0,4))-1||12 from dual)
+                            else
+                           <!-- 20160320上市的车型宝来，直接取上市月作为基期TP -->
+                                                  (case
+                                                   when p.version_id in
+                                                        (select version_id from fdm_car_version where submodel_id = '431' and to_char(launch_Date,'YYYYMMDD') =20160320)
+                                                         then to_char(to_date(t1.shangshidate,'YYYYMM'),'YYYYMM')
+                                                    <!-- 20160727上市的车型新代迈腾，直接取上市月作为基期TP -->
+                                                    when p.version_id in
+                                                      (select version_id from fdm_car_version where submodel_id = '698'  and to_char(launch_Date,'YYYYMMDD') =20160727)
+                                                       then to_char(to_date(t1.shangshidate,'YYYYMM'),'YYYYMM')
+                                                     <!-- 20160506上市的车型高尔夫嘉旅，直接取上市月作为基期TP -->
+                                                     when p.version_id in
+                                                      (select version_id from fdm_car_version where submodel_id = '2168' and to_char(launch_Date,'YYYYMMDD') =20160506)
+                                                       then to_char(to_date(t1.shangshidate,'YYYYMM'),'YYYYMM')
+                                                   else
+                                                    to_char(add_months(to_date(t1.shangshidate,'YYYYMM'),+1),'YYYYMM')
+                                                 end)
+                              end 
+                            )
+                          
+                            and t1.version_id = p.version_id
+                      
+                       and t1.totalsales > 0
+                           and p.week=7
+                            )
+                             else 
+                             <!-- 基期TP -->
+                             <isNotEqual property="cityIds" compareValue="0">
+                             	<isNotEqual property="citySplit" compareValue="true">
+                             		(select tp.tp
+                                     from cityBaseTp tp
+                                    where tp.version_id = t1.version_id
+                                      and tp.year = substr(to_char(t1.yearmonth), 0, 4))
+                             	</isNotEqual>
+                             	<isEqual property="citySplit" compareValue="true">
+                             		(select tp.tp
+                                       from faw_vw.fdm_car_city_BasePeriodTP tp
+                                      where tp.versioncode = t1.versioncode
+                                      and tp.cityid = t1.cityid
+                                        and tp.year = substr(to_char(t1.yearmonth), 0, 4))
+                             	</isEqual>
+                             </isNotEqual>
+                             <isEqual property="cityIds" compareValue="0">
+                             	(select tp.tp from faw_vw.fdm_car_BasePeriodTP tp 
+                             		where tp.versioncode=t1.versioncode and tp.year=substr(to_char(t1.yearmonth),0,4))
+                             </isEqual>
+                             
+                                            end
+                            ) *
+                                    (t1.sales / t1.totalSales)) value
+                       from t1, 
+                       <isEqual property="cityIds" compareValue="0">
+                       <!-- 全国均价 -->
+                       faw_vw.fdm_version_state_price
+                       </isEqual>
+                       <isNotEqual property="cityIds" compareValue="0">
+                       	t2
+                       </isNotEqual>
+                        p
+                      where t1.version_id = p.version_id
+                        and t1.yearmonth = p.ym
+                        and t1.totalsales > 0
+                        <isEqual property="citySplit" compareValue="true">
+                        and t1.cityid = p.cityid
+                        </isEqual>
+                        and p.week=7)
+                        ) d
+              group by d.yearmonth
+              		<isEqual property="citySplit" compareValue="true">
+               			,d.cityid,d.cityname,d.citynameen
+               		</isEqual>
+					)b where a.yearmonth = b.yearmonth(+)	
+					 <isEqual property="citySplit" compareValue="true">
+					 	 and a.cityid=b.cityid(+)
+					 </isEqual>
+				    order by 
+				    <isEqual property="citySplit" compareValue="true">
+               			a.cityid,
+               		</isEqual>
+				    a.yearmonth 
+				    asc
+	</isEqual>
+
+</select>
+
+<select id = "getExportContentEN" resultClass="java.util.HashMap">
+ select * from(	Select  Null Key,Null Value , null Num From dual Where 1 != 1
+	<isEqual property="segmentType" compareValue="true">
+	    Union
+		Select grade_name_cn Key, grade_name_en Value, 1 Num From V_Faw_Grade
+					<isNotEqual property="segment" compareValue="0">
+		  	     <isEqual property="allFlag" compareValue="true">
+		  	      Where Parent_Grade_Id In ($segment$)
+			     </isEqual>
+			     <isEqual property="allFlag" compareValue="false">
+			      Where Grade_Id In ($segment$);
+			     </isEqual>
+			  </isNotEqual>
+	 </isEqual>
+	<isEqual property="origType" compareValue="true">
+		Union
+			Select Orig_Name_cn Key,Orig_Name_en Value , 1 num From fdm_car_orig Where orig_id In ($orig$)
+			
+	</isEqual>
+	
+	<isEqual property="brandType" compareValue="true">
+		Union
+		Select brand_name_cn Key,brand_name_en Value ,1 num From fdm_car_brand Where brand_Id In ($brand$)
+	</isEqual>
+	
+	<isEqual property="manfType" compareValue="true">
+	    Union
+	   
+	   Select Manfname Key,Manfename Value, 1 num
+  From (Select Distinct s.Id Manfid,
+                        s.manf_name_cn Manfname,
+                        s.manf_name_en Manfename
+          From v_faw_Info_Grade g
+         Inner Join fdm_car_model b
+            On g.model_Id = b.model_Id
+         Inner Join fdm_car_submodel Ch
+            On b.model_id = Ch.model_id
+         Inner Join v_car_manf_brand s
+            On s.Manf_id = Ch.manf_id
+           And s.brand_id = Ch.brand_id
+         Inner Join fdm_car_brand p
+            On Ch.brand_id = p.brand_Id
+           Where s.port_type_id != 1)
+Where manfid In  ($manf$)
+	</isEqual>
+	
+	<isEqual property="modelType" compareValue="true">
+	    Union
+		Select submodel_name_cn Key,submodel_name_en Value, 1 num From fdm_car_submodel Where submodel_Id In ($model$)
+	</isEqual>
+	<isEqual property="citySplit" compareValue="true"> 
+		<!-- union Select distinct fc.city_name_cn Key, fc.city_name_en Value , 2 num
+		 From fdm_city fc where fc.city_id in (select distinct cityid from (Select a.Area_Id      Areaid,
+			       a.Area_Name_Cn Areaname,
+			       c.City_Id      Cityid,
+			       c.City_Name_Cn Cityname
+			  From Fdm_Area_City p
+			 Inner Join Fdm_Area a
+			    On a.Area_Id = p.Area_Id
+			 Inner Join Fdm_City c
+			    On c.City_Id = p.City_Id
+			 Where a.Group_Id = 2
+			   And c.City_Id In (Select City_Id
+			                       From Fdm_Model_City_Mix m
+			                      Where m.Year Between '2015' And '2015'
+			                      Group By City_Id)
+			    Or (c.City_Name_Cn Like '%长春%')
+			 Order By a.Area_Id, Decode(c.City_Name_Cn, '长春', 1, 0), c.City_Id)) -->
+		</isEqual>) order by num 
+</select>
+
+<select id="getExportCityContentEN" resultClass="java.util.HashMap">
+Select  Null Key,Null Value , null Num From dual Where 1 != 1
+	union Select distinct fc.city_name_cn Key, fc.city_name_en Value , 2 num
+		 From fdm_city fc where fc.city_id in (select distinct cityid from (Select a.Area_Id      Areaid,
+			       a.Area_Name_Cn Areaname,
+			       c.City_Id      Cityid,
+			       c.City_Name_Cn Cityname
+			  From Fdm_Area_City p
+			 Inner Join Fdm_Area a
+			    On a.Area_Id = p.Area_Id
+			 Inner Join Fdm_City c
+			    On c.City_Id = p.City_Id
+			 Where a.Group_Id = 2
+			   And c.City_Id In (Select City_Id
+			                       From Fdm_Model_City_Mix m
+			                      Where m.Year Between '2015' And '2015'
+			                      Group By City_Id)
+			    Or (c.City_Name_Cn Like '%长春%')
+			 Order By a.Area_Id, Decode(c.City_Name_Cn, '长春', 1, 0), c.City_Id))
+</select>
+
+<select id="getObjName" resultClass="java.lang.String">
+select g.parent_grade_name || ' ' || g.grade_name_cn || '-' || g.sub_grade_name 
+ from v_faw_grade g
+   where g.grade_id = $gradeId$
+</select>
+
+<!-- 2017年开始的新算法车型维度在售最新款销量为0取上代 -->
+	<sql id="submodelLatestOnSale">
+	With Base As
+ (Select distinct p.yearmonth ym,
+                  v.version_id Vid,
+                  v.parentid Pid,
+                  To_Char(v.launch_date, 'YYYYMM') listingdate,
+                  v.submodel_id Submodelid,
+                  v.manf_id manfid,
+                  v.brand_id brandid
+    From fdm_car_version v, fdm_date_main p
+   where v.submodel_id In ($subModelId$)
+     and p.yearmonth between substr(replace('$beginDate$', '-', ''),0,4)||'01' and
+         replace('$endDate$', '-', '')
+     and p.yearmonth >= to_char(v.launch_date, 'YYYYMM')
+   <![CDATA[  and (p.yearmonth <= to_char(v.halt_no_sale_date, 'YYYYMM') or
+         v.halt_no_sale_date is null)]]>
+         <!-- and v.is_installed_flag != 1 -->
+         ),
+Full_Time1 As /*拿出各月里的最新代型号(没有下一代的型号)*/
+ (select ym, vid, pid, listingdate, submodelId, manfid, brandid
+    from (select * from base) d
+   where not Exists (select 1
+            from base s
+           where d.ym = s.ym
+             and d.vid = s.pid)),
+    Full_Time as(
+           select distinct case when (vs.version_sale is null or round(vs.version_sale)=0)
+           <![CDATA[ and v.parentid is not null and v.parentid <> 0  and
+                f.ym >= to_char(dv.launch_date, 'YYYYMM') and
+                (f.ym <= to_char(dv.halt_no_sale_date, 'YYYYMM') or
+                dv.halt_no_sale_date is null)]]>
+           then v.parentid  else v.version_id end vid,f.ym
+             from Full_Time1 f inner join faw_vw.fdm_car_version v on v.version_id = f.vid
+             left join fdm_car_version dv on dv.version_id = v.parentid
+              left join faw_vw.fdm_version_sales vs 
+            on vs.version_id=f.vid and to_char(add_months(to_date(vs.year||lpad(vs.month,2,0),'YYYYMM'),1),'YYYYMM') = f.ym
+),
+ t1 as
+ (select a.version_id,
+ 		a.submodelid,
+         a.versioncode,
+         a.parentid,
+         to_char(fcv.halt_product_date,'YYYYMM') parentNoProductDate,
+         to_char(fcv.halt_no_sale_date, 'YYYYMM') parentNosaleDate,
+         a.startdate,
+         a.yearmonth,
+         a.shangshidate,
+         a.shangshidateDay,
+         a.nosaleDate,
+         nvl(round(b.version_sale), 0) sales
+        <isEqual property="citySplit" compareValue="true">
+			 	,p.city_id cityid<!-- ,
+			 		sum(nvl(round(b.version_sale), 0)) over(partition by p.ym,p.city_id)  -->
+			 	</isEqual>
+			 	<!--
+			 	<isNotEqual property="citySplit" compareValue="true">
+			 	sum(nvl(round(b.version_sale), 0)) over(partition by a.yearmonth) 
+			 	</isNotEqual>
+          totalSales -->
+    from (select d.yearmonth,
+                 d.id version_id,
+                 d.versioncode,
+                 d.parentid,
+                 d.grandid,
+                 d.ancestryid,
+                 d.submodelid,
+                 to_char(d.fzdy6, 'YYYYMM') shangshidate,
+                 to_char(d.startdate,'YYYYMM') startdate,
+                 to_char(d.fzdy6, 'YYYYMMDD') shangshidateDay,
+                 to_char(d.fzdy6, 'YYYY') launchdate,
+                 to_char(d.gnstdate,'YYYY-MM-DD') nosaleDate
+            from (select <!-- distinct --> n.version_id id,
+                                  n.version_code versioncode,
+                                  n.parentid parentid,
+                                  n2.parentid grandid,
+                                  n3.parentid ancestryid,
+                                  n.submodel_id submodelid,
+                                  n.launch_Date fzdy6,
+                                  n.halt_no_sale_date gnstdate,
+                                  g.start_date startdate,
+                                  d.year || lpad(d.month, 2, 0) yearmonth,
+                                  b.body_type_id hatchback
+	                  from <!-- wias_info_grade -->v_faw_info_grade g
+	                   inner join v_faw_grade vg
+                      on g.GRADE_ID = vg.GRADE_ID
+	                   <!-- 加上同报告库一样取月报的条件 -->
+	                 <!--  inner join faw_vw.fdm_faw_report_version_month m on m.model_id=g.model_id -->
+	                  <!-- 此处由于时间原因，先暂时定死取型号往上追塑四代，原本是写递归往上追塑，考虑调整太多且时间不够，先用此临时方案 -->
+	                  inner join fdm_car_version n on  n.model_id = g.model_id
+	                  inner join fdm_car_brand pb
+                      on n.brand_id = pb.brand_id
+                   inner join fdm_car_orig o
+                      on pb.orig_id = o.orig_id
+                    left join fdm_car_version n2
+                      on n.parentid = n2.version_id
+                    left join fdm_car_version n3
+                      on n2.parentid = n3.version_id
+                   inner join FDM_FAW_BODY_TYPE b
+                      on n.submodel_id = b.submodel_id
+                    full join fdm_date_main d
+                      on 1 = 1
+	                  where <!-- g.group_id = $userId$ and --> b.group_id = $userId$ 
+	                   and vg.sub_grade_name != '0'
+	                   and g.MODEL_ID in (select model_id from faw_vw.fdm_faw_report_version_month)
+	                  		 and d.yearmonth between substr(replace('$beginDate$','-',''),0,4)||'01' and replace('$endDate$','-','')
+	                  		 <!-- 201603以后电动车（排量为0的不参与计算） -->
+	                  		 <!-- and 1 = case when d.year || lpad(d.month, 2, 0) >= 201603 and n.version_id in( select version_id from faw_vw.fdm_car_version where emissions_id =66) 
+                           then 0 else 1 end -->
+                           <!-- 用户级别调整，按新加字段start_date做过滤条件，在特定时间加进来才计算 -->
+                            and 1=case when d.year || lpad(d.month, 2, 0) >= to_char(g.start_date,'YYYYMM') then 1 else 0 end
+	                  		<!--  and n.is_installed_flag != 1 -->
+	                  		 <!-- 20161101上市的高尔夫嘉旅，12月之前不参与计算 -->
+                    and 1 = (case when n.submodel_id = 2168 and to_char(n.launch_date,'YYYYMMDD') = 20161101 
+                    <![CDATA[and d.yearmonth < 201612 then 0 else 1 end)]]>
+	                  		 and
+						<!-- 按子车型 -->
+						n.submodel_id in($subModelId$)
+				   <isNotEmpty property="bodyTypeId">
+	             		<!-- 车身形式过滤条件 -->
+	             		and b.body_type_id in($bodyTypeId$)
+		           </isNotEmpty>
+                     ) d
+              <![CDATA[ inner join Full_Time YP on yp.vid = D.id
+                      AND YP.YM = D.YEARMONTH
+           where to_char(d.fzdy6, 'YYYYMM') <= d.yearmonth
+             and (to_char(d.gnstdate, 'YYYYMM') >= d.yearmonth or
+                  d.gnstdate is null)) a
+   ]]>
+     		<isEqual property="cityIds" compareValue="0">
+			inner join faw_vw.fdm_version_state_price p on a.version_id =  p.version_id and a.yearmonth = p.ym and p.week=7
+			 and p.price_fawvw is not null
+			 </isEqual>
+			  <isNotEqual property="cityIds" compareValue="0">
+			 	<isEqual property="citySplit" compareValue="true">
+			inner join  faw_vw.fdm_version_city_price p on a.version_id = p.version_id 
+				 and a.yearmonth = p.ym
+			     and p.week = 7
+			     and p.price_fawvw is not null
+			     and p.city_id in ($cityIds$)
+			     </isEqual>
+			 </isNotEqual>
+			left join faw_vw.fdm_version_sales b on a.version_id = b.version_id and a.yearmonth =  to_char(add_months(to_date(( case when length(b.month)=1 then b.year||0||b.month else  b.year||b.month end ), 'YYYYMM'), +1), 'YYYYMM')
+			 left join faw_vw.fdm_car_version fcv on fcv.version_id = a.parentid 
+			 <isNotEqual property="cityIds" compareValue="0">
+			 	<isNotEqual property="citySplit" compareValue="true">
+			<!-- where exists (select 1 from faw_vw.fdm_version_city_price p where a.version_id = p.version_id 
+				 and a.yearmonth = p.ym
+			     and p.week = 7
+			     and p.price_fawvw is not null
+			     and p.city_id in ($cityIds$)) -->
+			      inner join (select distinct p.version_id,p.ym yearmonth
+            from faw_vw.fdm_version_city_price p
+           where <!-- a.version_id = p.version_id
+             and a.yearmonth = p.ym -->
+             p.year between substr(replace('$beginDate$','-',''),0,4) and substr(replace('$endDate$','-',''),0,4)
+             and p.week = 7
+             and p.price_fawvw is not null
+             and p.city_id in ($cityIds$)) y
+             on a.version_id = y.version_id 
+             and a.yearmonth = y.yearmonth
+			     </isNotEqual>
+			 </isNotEqual>                         
+			       ),
+	</sql>
+	
+	<sql id="cityTP">
+		 <!-- 非城市全选时各城市加权mix取成交价 -->
+			<isNotEqual property="cityIds" compareValue="0">
+			
+				<isNotEqual property="citySplit" compareValue="true">
+			 t2 as
+  (
+     select distinct e.vid version_id,
+                  e.yearmonth ym,
+                  e.week,
+                  Case
+                    When Max(e.MaxCityMix)
+                     over(partition by e.vid, e.yearmonth, e.week) Is Not Null Then
+                     Sum(e.Mix) Over(Partition By e.Vid, e.Yearmonth, e.week)
+                    Else
+                     Avg(e.minTp)
+                     Over(Partition By e.vid, e.yearmonth, e.week)
+                  End price_fawvw
+    from (select d.vid,
+                 d.yearmonth,
+                 d.week,
+                 case
+                   when min(d.value) is not null then
+                    to_char(min(d.tp) * ratio_to_report(sum(d.value))
+                            over(partition by d.vid, d.yearmonth, d.week))
+                   else
+                    null
+                 end mix,
+                 Min(d.tp) minTP,
+                 Max(d.value) maxCityMix
+            From (select b.version_id vid,
+                         p.ym Yearmonth,
+                         p.week,
+                         p.price_fawvw tp,
+                         p.city_id region,
+                         m.value,
+                         b.submodelid as sub_model_id,
+                         row_number() over(partition by b.version_id, p.City_id, p.Ym, p.Week Order By b.version_id Desc) rn
+                    From Fdm_Version_City_Price p
+                   inner join t1 b
+                      on b.version_id = p.Version_Id
+                    left join Fdm_Model_City_Mix m
+                  <![CDATA[    on m.Sub_Model_Id = b.Submodelid
+                     and m.City_Id = p.City_Id
+                     and m.year = (CASE
+                           WHEN p.Year <= 2013 THEN
+                            2013
+                           ELSE
+                            p.Year - 1
+                         END)
+                   where 1 = 1 ]]>
+                     And P.ym between substr(replace('$beginDate$','-',''),0,4)||'01' and replace('$endDate$','-','')
+                     and p.Week = '7'
+                     and p.City_Id in ($cityIds$)
+                     and p.price_fawvw is not null
+                     and p.price_fawvw != 0.00
+                    
+                     ) d
+           where d.rn = 1
+           group by d.vid, d.yearmonth, d.week, d.region) e
+  ) ,		
+  				</isNotEqual>
+  				<!-- 城市拆分则显示城市 -->
+  				<isEqual property="citySplit" compareValue="true">
+		  					t2 as
+		 (select d.vid       version_id,
+		         d.yearmonth ym,
+		         d.week,
+		         d.tp        price_fawvw,
+		         d.cityId    cityid,
+		         fc.city_name_cn cityname,
+		         fc.city_name_en citynameen
+		    from (Select b.version_id Vid,
+		                 p.Ym Yearmonth,
+		                 p.Week,
+		                 p.price_fawvw tp,
+		                 p.City_Id Cityid,
+		                 Row_Number() Over(Partition By b.version_id, p.City_Id, p.Ym, p.Week Order By b.version_id Desc) Rn
+		            From Fdm_Version_City_Price p
+		           Inner Join t1 b
+		              On b.version_id = p.Version_Id
+		              and b.cityid=p.city_id
+		           Where p.City_Id In ($cityIds$)
+		             And p.price_fawvw Is Not Null
+		             And P.ym between substr(replace('$beginDate$','-',''),0,4)||'01' and replace('$endDate$','-','')
+		             and p.Week = '7') d
+		             left join fdm_city fc on d.cityid=fc.city_id
+		   where d.rn = 1),
+  				</isEqual>
+  		</isNotEqual>
+	</sql>
+	
+	<!-- 当城市多选且不拆分时加权上月TP -->
+	<sql id="LastMonthCityMixTP">	
+   t3 as
+ (select distinct e.vid version_id,
+                  e.yearmonth ym,
+                  e.week,
+                  Case
+                    When Max(e.MaxCityMix)
+                     over(partition by e.vid, e.yearmonth, e.week) Is Not Null Then
+                     Sum(e.Mix) Over(Partition By e.Vid, e.Yearmonth, e.week)
+                    Else
+                     Avg(e.minTp)
+                     Over(Partition By e.vid, e.yearmonth, e.week)
+                  End price_fawvw
+    from (select d.vid,
+                 d.yearmonth,
+                 d.week,
+                 case
+                   when min(d.value) is not null then
+                    to_char(min(d.tp) * ratio_to_report(sum(d.value))
+                            over(partition by d.vid, d.yearmonth, d.week))
+                   else
+                    null
+                 end mix,
+                 Min(d.tp) minTP,
+                 Max(d.value) maxCityMix
+            From (select b.version_id vid,
+                         b.Yearmonth,
+                         p.week,
+                         p.price_fawvw tp,
+                         p.city_id region,
+                         m.value,
+                         b.submodelid as sub_model_id,
+                         row_number() over(partition by b.version_id, p.City_id, p.Ym, p.Week Order By b.version_id Desc) rn
+                    From Fdm_Version_City_Price p
+                   inner join t1 b
+                      on case <!-- 20161101上市的高尔夫嘉旅做特殊处理，取上月tp时上市月加1 -->
+                            /*当月新增加，非当月新上市*/
+                           when b.startdate = b.yearmonth and b. shangshidate != b.yearmonth
+                             then null
+                            /*上月新上市*/
+                             when (case when b.submodelid = 2168 and b.shangshidateDay = 20161101 then to_char(add_months(to_date(b.shangshidate,'YYYYMM'),1),'YYYYMM') 
+                             <!-- 2016年1207日上市的新捷达做特殊处理，取上月tp时上市月减一 -->
+                           when b.submodelid = 884 and b.shangshidateDay = 20161207
+                                      then to_char(add_months(to_date(b.shangshidate, 'YYYYMM'),
+                                                      -1),
+                                           'YYYYMM')
+                            <!-- A3 Sportback20171009上市的车型，取上月tp时上市月-1处理 -->
+                           when b.submodelid = 65 and
+                                       b.shangshidateDay = 20171009 then
+                                   to_char(add_months(to_date(b.shangshidate, 'YYYYMM'),
+                                                      -1),
+                                           'YYYYMM')
+                          <!-- 速腾20170906上市的车型，取上月tp时做上市月+1处理 -->
+                          when b.submodelid = 828 and
+                                       b.shangshidateDay = 20170906 then
+                                   to_char(add_months(to_date(b.shangshidate, 'YYYYMM'),
+                                                      1),
+                                           'YYYYMM')
+                          <!-- 宝来20170901上市的车型，取上月tp时做上市月+1处理 -->
+                          when b.submodelid = 431 and
+                                       b.shangshidateDay = 20170901 then
+                                   to_char(add_months(to_date(b.shangshidate, 'YYYYMM'),
+                                                      1),
+                                           'YYYYMM')
+                          <!-- 上市时间为2017年9月30日的18款高尔夫嘉旅做延期2个月处理 -->
+                          when b.submodelid = 2168 and
+                                       b.shangshidateDay = 20170930 then
+                                   to_char(add_months(to_date(b.shangshidate, 'YYYYMM'),
+                                                      2),
+                                           'YYYYMM')
+                             else b.shangshidate end) =
+                                  to_char(add_months(to_date(b.yearmonth,
+                                                             'YYYYMM'),
+                                                     -1),
+                                          'YYYYMM') and
+                                  b.parentid is not null and b.parentid != 0 and
+                                  nvl(b.parentNosaleDate,'999999') >= b.shangshidate then
+                              b.parentid
+                           /*当月新上市*/
+                           when (case when b.submodelid = 2168 and b.shangshidateDay = 20161101 then to_char(add_months(to_date(b.shangshidate,'YYYYMM'),1),'YYYYMM') 
+                             <!-- 2016年1207日上市的新捷达做特殊处理，取上月tp时上市月减一 -->
+                           when b.submodelid = 884 and b.shangshidateDay = 20161207
+                                      then to_char(add_months(to_date(b.shangshidate, 'YYYYMM'),
+                                                      -1),
+                                           'YYYYMM')
+                            <!-- A3 Sportback20171009上市的车型，取上月tp时上市月-1处理 -->
+                           when b.submodelid = 65 and
+                                       b.shangshidateDay = 20171009 then
+                                   to_char(add_months(to_date(b.shangshidate, 'YYYYMM'),
+                                                      -1),
+                                           'YYYYMM')
+                          <!-- 速腾20170906上市的车型，取上月tp时做上市月+1处理 -->
+                          when b.submodelid = 828 and
+                                       b.shangshidateDay = 20170906 then
+                                   to_char(add_months(to_date(b.shangshidate, 'YYYYMM'),
+                                                      1),
+                                           'YYYYMM')
+                          <!-- 宝来20170901上市的车型，取上月tp时做上市月+1处理 -->
+                          when b.submodelid = 431 and
+                                       b.shangshidateDay = 20170901 then
+                                   to_char(add_months(to_date(b.shangshidate, 'YYYYMM'),
+                                                      1),
+                                           'YYYYMM')
+                          <!-- 上市时间为2017年9月30日的18款高尔夫嘉旅做延期2个月处理 -->
+                          when b.submodelid = 2168 and
+                                       b.shangshidateDay = 20170930 then
+                                   to_char(add_months(to_date(b.shangshidate, 'YYYYMM'),
+                                                      2),
+                                           'YYYYMM')
+                             else b.shangshidate end) = b.yearmonth then null
+                             else b.version_id end = p.Version_Id
+                           and  to_char(add_months(to_date(p.ym, 'yyyymm'), 1),
+                                   'yyyymm') = b.yearmonth
+                    left join Fdm_Model_City_Mix m
+                      on m.Sub_Model_Id = b.Submodelid
+                     and m.City_Id = p.City_Id
+                    <![CDATA[ and m.year = (CASE
+                           WHEN p.Year <= 2013 THEN
+                            2013
+                           ELSE
+                            case when substr(p.ym,5,6) = 12
+                               then p.year else p.year - 1
+                            end
+                         END)]]>
+                   where 1 = 1
+                     and p.Week = '7'
+                     and p.City_Id in ($cityIds$)
+                     and p.price_fawvw is not null
+                     and p.price_fawvw != 0.00) d
+           where d.rn = 1
+           group by d.vid, d.yearmonth, d.week, d.region) e),
+	</sql>
+	
+	<!-- 当1月份全国取上月tp的时候因为用到的mix不一样所以要自己重新算加权 -->
+	<sql id="stateLastMontTP">
+		 stateLastMontTP as(
+  select distinct e.vid version_id,
+                  e.yearmonth ym,
+                  e.week,
+                  Case
+                    When Max(e.MaxCityMix)
+                     over(partition by e.vid, e.yearmonth, e.week) Is Not Null Then
+                     Sum(e.Mix) Over(Partition By e.Vid, e.Yearmonth, e.week)
+                    Else
+                     Avg(e.minTp)
+                     Over(Partition By e.vid, e.yearmonth, e.week)
+                  End price_fawvw
+    from (select d.vid,
+                 d.yearmonth,
+                 d.week,
+                 case
+                   when min(d.value) is not null then
+                    to_char(min(d.tp) * ratio_to_report(sum(d.value))
+                            over(partition by d.vid, d.yearmonth, d.week))
+                   else
+                    null
+                 end mix,
+                 Min(d.tp) minTP,
+                 Max(d.value) maxCityMix
+            From (select b.version_id vid,
+                         b.Yearmonth,
+                         p.week,
+                         p.price_fawvw tp,
+                         p.city_id region,
+                         m.value,
+                         b.submodelid as sub_model_id,
+                         row_number() over(partition by b.version_id, p.City_id, p.Ym, p.Week Order By b.version_id Desc) rn
+                    From Fdm_Version_City_Price p
+                   inner join t1 b
+                      on case <!-- 20161101上市的高尔夫嘉旅做特殊处理，取上月tp时上市月加1 -->
+                           /*当月新增加，非当月新上市*/
+                           when b.startdate = b.yearmonth and b. shangshidate != b.yearmonth
+                             then null
+                           /*上月新上市*/
+                           when (case when b.submodelid = 2168 and b.shangshidateDay = 20161101 then to_char(add_months(to_date(b.shangshidate,'YYYYMM'),1),'YYYYMM') 
+                           <!-- 2016年1207日上市的新捷达做特殊处理，取上月tp时上市月减一 -->
+                           when b.submodelid = 884 and b.shangshidateDay = 20161207
+                                      then to_char(add_months(to_date(b.shangshidate, 'YYYYMM'),
+                                                      -1),
+                                           'YYYYMM')
+                            <!-- A3 Sportback20171009上市的车型，取上月tp时上市月-1处理 -->
+                           when b.submodelid = 65 and
+                                       b.shangshidateDay = 20171009 then
+                                   to_char(add_months(to_date(b.shangshidate, 'YYYYMM'),
+                                                      -1),
+                                           'YYYYMM')
+                          <!-- 速腾20170906上市的车型，取上月tp时做上市月+1处理 -->
+                          when b.submodelid = 828 and
+                                       b.shangshidateDay = 20170906 then
+                                   to_char(add_months(to_date(b.shangshidate, 'YYYYMM'),
+                                                      1),
+                                           'YYYYMM')
+                          <!-- 宝来20170901上市的车型，取上月tp时做上市月+1处理 -->
+                          when b.submodelid = 431 and
+                                       b.shangshidateDay = 20170901 then
+                                   to_char(add_months(to_date(b.shangshidate, 'YYYYMM'),
+                                                      1),
+                                           'YYYYMM')
+                          <!-- 上市时间为2017年9月30日的18款高尔夫嘉旅做延期2个月处理 -->
+                          when b.submodelid = 2168 and
+                                       b.shangshidateDay = 20170930 then
+                                   to_char(add_months(to_date(b.shangshidate, 'YYYYMM'),
+                                                      2),
+                                           'YYYYMM')
+                           else b.shangshidate end) =
+                                to_char(add_months(to_date(b.yearmonth,
+                                                           'YYYYMM'),
+                                                   -1),
+                                        'YYYYMM') and b.parentid is not null and
+                                b.parentid != 0 and
+                                nvl(b.parentNosaleDate,'999999') >= b.shangshidate then
+                            b.parentid
+                        /*当月新上市*/
+                       when (case when b.submodelid = 2168 and b.shangshidateDay = 20161101 then to_char(add_months(to_date(b.shangshidate,'YYYYMM'),1),'YYYYMM') 
+                           <!-- 2016年1207日上市的新捷达做特殊处理，取上月tp时上市月减一 -->
+                           when b.submodelid = 884 and b.shangshidateDay = 20161207
+                                      then to_char(add_months(to_date(b.shangshidate, 'YYYYMM'),
+                                                      -1),
+                                           'YYYYMM')
+                            <!-- A3 Sportback20171009上市的车型，取上月tp时上市月-1处理 -->
+                           when b.submodelid = 65 and
+                                       b.shangshidateDay = 20171009 then
+                                   to_char(add_months(to_date(b.shangshidate, 'YYYYMM'),
+                                                      -1),
+                                           'YYYYMM')
+                          <!-- 速腾20170906上市的车型，取上月tp时做上市月+1处理 -->
+                          when b.submodelid = 828 and
+                                       b.shangshidateDay = 20170906 then
+                                   to_char(add_months(to_date(b.shangshidate, 'YYYYMM'),
+                                                      1),
+                                           'YYYYMM')
+                          <!-- 宝来20170901上市的车型，取上月tp时做上市月+1处理 -->
+                          when b.submodelid = 431 and
+                                       b.shangshidateDay = 20170901 then
+                                   to_char(add_months(to_date(b.shangshidate, 'YYYYMM'),
+                                                      1),
+                                           'YYYYMM')
+                          <!-- 上市时间为2017年9月30日的18款高尔夫嘉旅做延期2个月处理 -->
+                          when b.submodelid = 2168 and
+                                       b.shangshidateDay = 20170930 then
+                                   to_char(add_months(to_date(b.shangshidate, 'YYYYMM'),
+                                                      2),
+                                           'YYYYMM')
+                           else b.shangshidate end) = b.yearmonth then null
+                           else b.version_id end = p.Version_Id
+                     and to_char(add_months(to_date(p.ym, 'yyyymm'), 1),
+                                 'yyyymm') = b.yearmonth
+                   <![CDATA[  left join Fdm_Model_City_Mix m
+                      on m.Sub_Model_Id = b.Submodelid
+                     and m.City_Id = p.City_Id
+                     and m.year = (CASE
+                           WHEN p.Year <= 2013 THEN
+                            2013
+                           ELSE
+                            case
+                              when substr(p.ym, 5, 6) = 12 then
+                               p.year
+                              else
+                               p.year - 1
+                            end
+                         END)
+                   where 1 = 1
+                     and p.Week = '7'
+                     and p.City_Id in (select distinct city_id from fdm_area_city where city_id <> 47)
+                     and p.price_fawvw is not null
+                     and p.price_fawvw != 0.00) d
+           where d.rn = 1]]>
+           group by d.vid, d.yearmonth, d.week, d.region) e
+ ),
+	</sql>
+	<!--每个月的变化差  -->
+	<sql id="changeMinus">
+	changeMinus as
+ (select plb.yearmonth,
+         plb.version_id,
+         <isEqual property="citySplit" compareValue="true">
+         plb.cityid,
+         plb.cityname,
+         plb.citynameen,
+         </isEqual>
+         to_char(((plb.tp - plb.lmtp) / plb.basetp) * (plb.sales / case
+                   when plb.totalsales = 0 then
+                    null
+                   else
+                    plb.totalsales
+                 end)) avalue
+    from tspricelmbase plb
+   where plb.tp > 0
+     and plb.lmtp > 0
+     and plb.basetp > 0),
+	</sql>
+	
+	<!-- 各型号的每月的差值和算出来,然后100%相加算出每个月的百分比 -->
+	<sql id="aSumAndTv">
+	  aSumYm as (
+      select a.yearmonth,sum(a.avalue) avalue 
+      					<isEqual property="citySplit" compareValue="true">
+	               			,a.cityid,
+	               			a.cityname,
+	               			a.citynameen
+                       	</isEqual>
+      from changeMinus a group by a.yearmonth
+       <isEqual property="citySplit" compareValue="true">
+            ,a.cityid, a.cityname, a.citynameen           
+       </isEqual>
+  ),                      
+ tv as (
+                            select a.yearmonth,
+                            <isEqual property="citySplit" compareValue="true">
+	               			a.cityid,
+	               			a.cityname,
+	               			a.citynameen,
+                       		</isEqual>
+                             decode(substr(a.yearmonth,5,6),'01',1+a.avalue,
+                                     '02',
+                                     case when (select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'01'
+                                     <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                                     ) is null and a.avalue is null then null else 
+                                     1+nvl((select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'01'
+                                     <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                                     ),0)+nvl(a.avalue,0) end,
+                                     '03',
+                                     case when (select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'01' 
+                                     <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>) is null
+                                     and (select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'02'
+                          			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null and a.avalue is null then null else
+                                     1+nvl((select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'01' 
+                                     <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>),0)
+                         +nvl((select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'02'
+                          			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)+nvl(a.avalue,0) end,
+                         '04',
+                         case when (select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'01'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null 
+                         and (select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'02'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null 
+                         and (select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'03'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null and a.avalue is null then null else 
+                         1+nvl((select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'01'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'02'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'03'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)+nvl(a.avalue,0) end,
+                         '05',
+                         case when (select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'01'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null 
+                         and (select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'02'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'03'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'04'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and a.avalue is null then null else
+                         1+nvl((select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'01'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'02'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'03'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'04'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)+nvl(a.avalue,0) end,
+                         '06',
+                         case when (select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'01'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null 
+                         and (select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'02'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null 
+                         and (select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'03'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'04'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'05'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and a.avalue is null then null else
+                         1+nvl((select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'01'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'02'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'03'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'04'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'05'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)+nvl(a.avalue,0) end,
+                         '07',
+                         case when (select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'01'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null 
+                         and (select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'02'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'03'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'04'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null 
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'05'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null 
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'06'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and a.avalue is null then null else
+                         1+nvl((select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'01'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'02'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where  s.yearmonth =substr(a.yearmonth,0,4)||'03'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'04'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'05'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'06'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)+nvl(a.avalue,0) end,
+                         '08',
+                         case when (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'01'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'02'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'03'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'04'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'05'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'06'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'07'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and a.avalue is null then null else 
+                         1+nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'01'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'02'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'03'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'04'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'05'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'06'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'07'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)+nvl(a.avalue,0) end,
+                         '09',
+                         case when (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'01'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'02'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'03'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'04'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'05'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'06'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'07'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null 
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'08'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and a.avalue is null then null else
+                         1+nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'01'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'02'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'03'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'04'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'05'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'06'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'07'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'08'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)+nvl(a.avalue,0) end,
+                         '10',
+                         case when (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'01'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'02'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'03'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null 
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'04'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'05'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'06'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'07'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'08'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'09'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and a.avalue is null then null else
+                         1+nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'01'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'02'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'03'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'04'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'05'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'06'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'07'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'08'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'09'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)+nvl(a.avalue,0) end,
+                         '11',
+                         case when (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'01'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'02'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'03'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'04'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'05'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'06'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'07'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'08'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'09'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'10'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and a.avalue is null then null else
+                         1+nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'01'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'02'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'03'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'04'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'05'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'06'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'07'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'08'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'09'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'10'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)+nvl(a.avalue,0) end,
+                         '12',
+                         case when (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'01'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'02'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'03'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'04'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'05'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'06'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'07'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'08'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'09'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'10'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and (select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'11'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ) is null
+                         and a.avalue is null then null else
+                         1+nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'01'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'02'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'03'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'04'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'05'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'06'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'07'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'08'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'09'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'10'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl((select s.avalue from aSumYm s where s.yearmonth =substr(a.yearmonth,0,4)||'11'
+                         			 <isEqual property="citySplit" compareValue="true">
+                                     	 and s.cityid = a.cityid
+                                     </isEqual>
+                         ),0)
+                         +nvl(a.avalue,0) end ) value
+                        from aSumYm a
+ ) 
+	</sql>
+<sql id="pricelmbase">
+<isEqual property="cityIds" compareValue="0">
+pricelmbase as
+ (select t1.*,
+         round(p.price_fawvw / 10) * 10 tp,
+         case
+           when substr(t1.yearmonth, 5, 6) = '01' then
+            round(sltp.price_fawvw / 10) * 10
+           else
+            (select round(price_fawvw / 10) * 10
+               from faw_vw.fdm_version_state_price fsp
+              where to_char(add_months(to_date(ym, 'yyyymm'), 1), 'yyyymm') =
+                    t1.yearmonth
+                and version_id = case /*当月新增加，非当月新上市*/
+                      when t1.startdate = t1.yearmonth and
+                           t1.yearmonth != t1.shangshidate then
+                       null
+                    /*上月新上市*/
+                      when (case
+                             when t1.submodelid = 2168 and
+                                  t1.shangshidateDay = 20161101 then
+                              to_char(add_months(to_date(t1.shangshidate, 'YYYYMM'), 1),
+                                      'YYYYMM')
+                             when t1.submodelid = 884 and
+                                  t1.shangshidateDay = 20161207 then
+                              to_char(add_months(to_date(t1.shangshidate, 'YYYYMM'),
+                                                 -1),
+                                      'YYYYMM')
+                             when t1.submodelid = 65 and
+                                  t1.shangshidateDay = 20171009 then
+                              to_char(add_months(to_date(t1.shangshidate, 'YYYYMM'),
+                                                 -1),
+                                      'YYYYMM')
+                             when t1.submodelid = 828 and
+                                  t1.shangshidateDay = 20170906 then
+                              to_char(add_months(to_date(t1.shangshidate, 'YYYYMM'), 1),
+                                      'YYYYMM')
+                             when t1.submodelid = 431 and t1.shangshidateDay = 20170901 then
+                              to_char(add_months(to_date(t1.shangshidate, 'YYYYMM'), 1),
+                                      'YYYYMM')
+                             when t1.submodelid = 2168 and
+                                  t1.shangshidateDay = 20170930 then
+                              to_char(add_months(to_date(t1.shangshidate, 'YYYYMM'), 2),
+                                      'YYYYMM')
+                             else
+                              t1.shangshidate
+                           end) =
+                           to_char(add_months(to_date(t1.yearmonth, 'YYYYMM'),
+                                              -1),
+                                   'YYYYMM') and t1.parentid is not null and
+                           t1.parentid != 0 and
+                           nvl(t1.parentNosaleDate, '999999') >=
+                           t1.shangshidate then
+                       t1.parentid /*当月新上市*/
+                      when (case
+                             when t1.submodelid = 2168 and
+                                  t1.shangshidateDay = 20161101 then
+                              to_char(add_months(to_date(t1.shangshidate, 'YYYYMM'), 1),
+                                      'YYYYMM')
+                             when t1.submodelid = 884 and
+                                  t1.shangshidateDay = 20161207 then
+                              to_char(add_months(to_date(t1.shangshidate, 'YYYYMM'),
+                                                 -1),
+                                      'YYYYMM')
+                             when t1.submodelid = 65 and
+                                  t1.shangshidateDay = 20171009 then
+                              to_char(add_months(to_date(t1.shangshidate, 'YYYYMM'),
+                                                 -1),
+                                      'YYYYMM')
+                             when t1.submodelid = 828 and
+                                  t1.shangshidateDay = 20170906 then
+                              to_char(add_months(to_date(t1.shangshidate, 'YYYYMM'), 1),
+                                      'YYYYMM')
+                             when t1.submodelid = 431 and t1.shangshidateDay = 20170901 then
+                              to_char(add_months(to_date(t1.shangshidate, 'YYYYMM'), 1),
+                                      'YYYYMM')
+                             when t1.submodelid = 2168 and
+                                  t1.shangshidateDay = 20170930 then
+                              to_char(add_months(to_date(t1.shangshidate, 'YYYYMM'), 2),
+                                      'YYYYMM')
+                             else
+                              t1.shangshidate
+                           end) = t1.yearmonth then
+                       null
+                      else
+                       t1.version_id
+                    end
+                and fsp.week = 7)
+         end lmtp,
+         round(base.tp / 10) * 10 basetp
+    from t1,
+         faw_vw.fdm_version_state_price p,
+         stateLastMontTP                sltp,
+         faw_vw.fdm_car_BasePeriodTP    base
+   where t1.version_id = p.version_id
+     and t1.yearmonth = p.ym
+     and p.week = 7
+     and sltp.version_id(+) = t1.version_id
+     and t1.yearmonth = sltp.ym(+)
+     and base.versioncode = t1.versioncode
+     and base.year = substr(to_char(t1.yearmonth), 0, 4)),
+</isEqual>
+<isNotEqual property="cityIds" compareValue="0">
+	<isNotEqual property="citySplit" compareValue="true">
+		pricelmbase as
+ (select t1.*,
+                 round(p.price_fawvw / 10) * 10 tp,
+                 round(t3.price_fawvw / 10) * 10 lmtp,
+                 round(base.tp,-1) basetp
+            from t1, t2 p, t3, cityBaseTp base
+           where t1.version_id = p.version_id
+             and t1.yearmonth = p.ym
+             and t1.version_id = t3.version_id
+             and t1.yearmonth = t3.ym
+             and t3.week = 7
+             and p.week = 7
+             and base.version_id(+) = t1.version_id
+             and base.year(+) = substr(to_char(t1.yearmonth), 0, 4)),
+	</isNotEqual>
+	<isEqual property="citySplit" compareValue="true">
+	pricelmbase as (
+     select t1.*,
+         p.cityname,
+         p.citynameen,
+         round(p.price_fawvw / 10) * 10 tp,
+         (select round(fsp.price_fawvw / 10) * 10
+                      from Fdm_Version_City_Price fsp
+                     where to_char(add_months(to_date(fsp.ym, 'yyyymm'), 1),
+                                   'yyyymm') = t1.yearmonth
+                       and fsp.version_id = case /*当月新增加，非当月新上市*/
+                             when t1.startdate = t1.yearmonth and
+                                  t1.yearmonth != t1.shangshidate then
+                              null /*上月新上市*/
+                             when (case
+                                    when t1.submodelid = 2168 and
+                                         t1.shangshidateDay = 20161101 then
+                                     to_char(add_months(to_date(t1.shangshidate,
+                                                                'YYYYMM'),
+                                                        1),
+                                             'YYYYMM')
+                                    when t1.submodelid = 884 and
+                                         t1.shangshidateDay = 20161207 then
+                                     to_char(add_months(to_date(t1.shangshidate,
+                                                                'YYYYMM'),
+                                                        -1),
+                                             'YYYYMM')
+                                    when t1.submodelid = 65 and
+                                         t1.shangshidateDay = 20171009 then
+                                     to_char(add_months(to_date(t1.shangshidate,
+                                                                'YYYYMM'),
+                                                        -1),
+                                             'YYYYMM')
+                                    when t1.submodelid = 828 and
+                                         t1.shangshidateDay = 20170906 then
+                                     to_char(add_months(to_date(t1.shangshidate,
+                                                                'YYYYMM'),
+                                                        1),
+                                             'YYYYMM')
+                                    when t1.submodelid = 431 and
+                                         t1.shangshidateDay = 20170901 then
+                                     to_char(add_months(to_date(t1.shangshidate,
+                                                                'YYYYMM'),
+                                                        1),
+                                             'YYYYMM')
+                                    when t1.submodelid = 2168 and
+                                         t1.shangshidateDay = 20170930 then
+                                     to_char(add_months(to_date(t1.shangshidate,
+                                                                'YYYYMM'),
+                                                        2),
+                                             'YYYYMM')
+                                    else
+                                     t1.shangshidate
+                                  end) = to_char(add_months(to_date(t1.yearmonth,
+                                                                    'YYYYMM'),
+                                                            -1),
+                                                 'YYYYMM') and
+                                  t1.parentid is not null and t1.parentid != 0 and
+                                  nvl(t1.parentNosaleDate, '999999') >=
+                                  t1.shangshidate then
+                              t1.parentid /*当月新上市*/
+                             when (case
+                                    when t1.submodelid = 2168 and
+                                         t1.shangshidateDay = 20161101 then
+                                     to_char(add_months(to_date(t1.shangshidate,
+                                                                'YYYYMM'),
+                                                        1),
+                                             'YYYYMM')
+                                    when t1.submodelid = 884 and
+                                         t1.shangshidateDay = 20161207 then
+                                     to_char(add_months(to_date(t1.shangshidate,
+                                                                'YYYYMM'),
+                                                        -1),
+                                             'YYYYMM')
+                                    when t1.submodelid = 65 and
+                                         t1.shangshidateDay = 20171009 then
+                                     to_char(add_months(to_date(t1.shangshidate,
+                                                                'YYYYMM'),
+                                                        -1),
+                                             'YYYYMM')
+                                    when t1.submodelid = 828 and
+                                         t1.shangshidateDay = 20170906 then
+                                     to_char(add_months(to_date(t1.shangshidate,
+                                                                'YYYYMM'),
+                                                        1),
+                                             'YYYYMM')
+                                    when t1.submodelid = 431 and
+                                         t1.shangshidateDay = 20170901 then
+                                     to_char(add_months(to_date(t1.shangshidate,
+                                                                'YYYYMM'),
+                                                        1),
+                                             'YYYYMM')
+                                    when t1.submodelid = 2168 and
+                                         t1.shangshidateDay = 20170930 then
+                                     to_char(add_months(to_date(t1.shangshidate,
+                                                                'YYYYMM'),
+                                                        2),
+                                             'YYYYMM')
+                                    else
+                                     t1.shangshidate
+                                  end) = t1.yearmonth then
+                              null
+                             else
+                              t1.version_id
+                           end
+                       and fsp.week = 7
+                       and t1.cityid = fsp.city_id) lmtp,
+                       (round(base.tp / 10) * 10) basetp
+    from t1, t2 p, fdm_car_city_BasePeriodTP base
+   where t1.version_id = p.version_id
+     and t1.yearmonth = p.ym
+     and t1.cityid = p.cityid
+     and p.week = 7
+     and base.versioncode(+) = t1.versioncode
+     and base.cityid(+) = t1.cityid
+     and base.year(+) = substr(to_char(t1.yearmonth), 0, 4)
+),
+	</isEqual>
+</isNotEqual>
+tspricelmbase as
+ (select y.*, 
+ <isEqual property="citySplit" compareValue="true">
+ sum(nvl(round(y.sales, 0), 0)) over(partition by y.yearmonth, y.cityid) totalsales
+ </isEqual>
+ <isNotEqual property="citySplit" compareValue="true">
+  sum(nvl(y.sales, 0)) over(partition by y.yearmonth) totalsales
+ </isNotEqual>
+    from pricelmbase y
+   where y.tp > 0
+     and y.lmtp > 0
+     and y.basetp > 0),
+</sql>
+<!-- 获取价格降幅分析数据2017年开始新算法 -->
+<select id="getCityPriceIndexAnalyseNewData" resultClass="com.ways.app.price.model.CityPriceIndexEntity">
+	
+	<isEqual property="objectType" compareValue="3">
+	<include refid="submodelLatestOnSale"/>
+	<include refid="cityTP"/>
+		<isEqual property="cityIds" compareValue="0">
+			<include refid="stateLastMontTP"/>
+		</isEqual>
+		<isNotEqual property="cityIds" compareValue="0">
+			<isNotEqual property="citySplit" compareValue="true">
+			<include  refid="LastMonthCityMixTP"/>
+			<!-- 城市不拆分，要重新加权城市基期TP -->
+			<include refid="cityBaseTp"/>
+			</isNotEqual>
+		</isNotEqual>
+	</isEqual>
+	<isNotEqual property="objectType" compareValue="3">
+		<include refid="getVersionByTp"/>
+		,
+		<include refid="cityTP"/>
+		<isEqual property="cityIds" compareValue="0">
+			<include refid="stateLastMontTP"/>
+		</isEqual>
+		<isNotEqual property="cityIds" compareValue="0">
+			<isNotEqual property="citySplit" compareValue="true">
+			<include  refid="LastMonthCityMixTP"/>
+			<!-- 城市不拆分，要重新加权城市基期TP -->
+			<include refid="cityBaseTp"/>
+			</isNotEqual>
+		</isNotEqual>
+	</isNotEqual>
+	<include refid="pricelmbase"/>
+	<include refid="changeMinus"/>
+	<include refid="aSumAndTv"/>
+	select a.yearmonth, 
+	<isEqual property="multiType" compareValue="1">
+	<!-- 时间多选 -->
+	case when a.yearmonth >= replace('$beginDate$','-','') and a.yearmonth <![CDATA[<=]]> replace('$endDate$','-','') then 
+       nvl(to_char(value * 100, 'fm99999990.00'), '-') else '-' end value
+	</isEqual>
+	<isNotEqual property="multiType" compareValue="1">
+   		<!-- 对象多选 -->
+   	 nvl(to_char(value * 100, 'fm99999990.00'), '-') value
+   	</isNotEqual>
+	 <isEqual property="citySplit" compareValue="true">
+	 	,a.cityid,a.cityname
+	 </isEqual>
+	  <isNotEqual property="citySplit" compareValue="true">
+	  ,null cityid,null cityname
+	  </isNotEqual>
+  from (select t.year || lpad(t.month, 2, 0) yearmonth
+  			<isEqual property="citySplit" compareValue="true">
+             ,f.city_id cityid,
+               f.city_name_cn cityname          
+       		</isEqual>
+          from fdm_date_main t
+          <isEqual property="citySplit" compareValue="true">
+            , fdm_city f          
+       </isEqual>
+			<isEqual property="multiType" compareValue="1">
+   		<!-- 时间多选 -->
+   		where t.year || lpad(t.month,2,0) between substr('$beginDate$',0,4) || '01' and substr('$beginDate$',0,4) || '12'
+   			</isEqual>
+   			<isNotEqual property="multiType" compareValue="1">
+   		<!-- 对象多选 -->
+	    where t.year || lpad(t.month,2,0) between replace('$beginDate$','-','')  and replace('$endDate$','-','')
+   			</isNotEqual>
+   			<isEqual property="citySplit" compareValue="true">
+             and f.city_id in ($cityIds$)         
+       </isEqual>
+               ) a, tv b
+    where a.yearmonth = b.yearmonth(+)
+    	<isEqual property="citySplit" compareValue="true">
+            and a.cityid = b.cityid(+)
+           order by a.cityid, a.yearmonth asc      
+       </isEqual>
+    <isNotEqual property="citySplit" compareValue="true">
+    order by a.yearmonth asc
+    </isNotEqual>
+</select>
+
+<!-- 导出区域价格降幅原始数据2017新算法 -->
+<select id="exportCityPriceIndexOriginalNewData" resultClass="com.ways.app.price.model.VersionCityPriceIndexInfo">
+			<isNotEqual property="objectType" compareValue="3">
+			<!-- 成交价算法 -->
+			<include refid="getVersionByTp"/>,
+			</isNotEqual>
+			<isEqual property="objectType" compareValue="3">
+			<include refid="submodelLatestOnSale"/>
+			</isEqual>
+			
+			<isEqual property="cityIds" compareValue="0">
+			<include refid="stateLastMontTP"/>
+			</isEqual>
+			<isNotEqual property="cityIds" compareValue="0">
+				<include refid="cityTP"/>
+				<isNotEqual property="citySplit" compareValue="true">
+				<include refid="LastMonthCityMixTP"/>
+				<!-- 城市拆分重新加权城市基期TP -->
+				<include refid="cityBaseTp"/>
+				</isNotEqual>
+			</isNotEqual>
+			t4 as(
+				<include refid="getVersionInfo"/>
+			),
+			<include refid="pricelmbase"/>
+			totalSales as (select distinct b.yearmonth, 
+			<isEqual property="citySplit" compareValue="true">
+			b.cityid,
+			</isEqual>
+			b.totalsales from tspricelmbase b)
+select t1.yearmonth,t4.*,plb.tp price,
+				   <isEqual property="citySplit" compareValue="true">
+				   p.cityid,
+				   p.cityname,
+				   p.citynameen,
+				   </isEqual>
+				   <isNotEqual property="citySplit" compareValue="true">
+			       null cityid,
+			       null cityName,
+			       null citynameen,
+       			   </isNotEqual>
+       			   <!-- 上月tp -->
+			  	   plb.lmtp lastMonthPrice,
+                   <!-- 基期TP -->
+                   plb.basetp datumprice,t1.sales,'0' cvDifference,
+     case when t1.sales = 0 and ts.totalsales is null then 0 else ts.totalsales end totalsales,
+	 case when ts.totalsales != 0 and plb.basetp is not null and plb.lmtp is not null 
+              and ts.totalSales is not null and t1.sales is not null then
+     to_char(((plb.tp - plb.lmtp) / plb.basetp) * (t1.sales / ts.totalSales),'fm99999990.0000000000')
+         else '-' end priceindex
+				   from t1,t4 
+				   	<isEqual property="citySplit" compareValue="true">
+				   		, t2 p  
+				   	</isEqual>
+				  , pricelmbase plb, totalsales ts
+		 where t1.yearmonth between replace('$beginDate$','-','') and replace('$endDate$','-','')
+				       and t1.version_id = t4.versionId
+				   	   and t1.version_id = t4.versionId
+					   and plb.version_id(+) = t1.version_id
+					   and t1.yearmonth = plb.yearmonth(+)
+					   and t1.yearmonth = ts.yearmonth(+)
+					   <isEqual property="citySplit" compareValue="true">
+					   and t1.version_id = p.version_id
+					   and t1.yearmonth = p.ym
+					   and p.week = 7
+					   and p.cityid = t1.cityid
+					   and t1.cityid = plb.cityid(+)
+					   and t1.cityid = ts.cityid(+)
+					   </isEqual>
+				   order by t1.yearmonth asc,<!-- t2.grade_order asc, -->
+				            t4.parent_grade_name,
+				            t4.GRADE_NAME_EN,
+				            t4.sub_grade_name,
+					        <isEqual property="citySplit" compareValue="true">
+					        p.cityid,
+					        </isEqual>
+							t4.manfletter asc,t4.submodelname asc,t4.modelyear desc
+</select>
+</sqlMap>

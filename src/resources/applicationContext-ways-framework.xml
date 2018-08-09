@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:context="http://www.springframework.org/schema/context"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-3.1.xsd
+            http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context-3.1.xsd"
+       default-lazy-init="true">
+
+    <bean id="sqlMapClient" class="org.springframework.orm.ibatis.SqlMapClientFactoryBean">
+        <property name="configLocation" value="classpath:ibatic/sql-map-config.xml" />
+        <property name="mappingLocations">
+            <list>
+                <value>classpath:ibatic/auth/login.xml</value>
+            </list>
+        </property>
+        <property name="dataSource" ref="dataSource" />
+        <property name="useTransactionAwareDataSource" value="true"></property>
+    </bean>
+
+    <!-- 按系统功能权限的数据连接信息 -->
+	  <bean id="dataSourceByCas" class="com.mchange.v2.c3p0.ComboPooledDataSource" destroy-method="close">
+		  <property name="driverClass" value="oracle.jdbc.OracleDriver" /> 
+		  <property name="jdbcUrl" value="jdbc:oracle:thin:@192.168.1.7:1521:wias7" /> 
+		  <property name="user" value="cas" /> 
+		  <property name="password" value="cas" /> 
+		  <property name="minPoolSize" value="10" /> 
+		  <property name="maxPoolSize" value="100" /> 
+		  <property name="maxIdleTime" value="1800" /> 
+		  <property name="acquireIncrement" value="2" /> 
+		  <property name="maxStatements" value="0" /> 
+		  <property name="initialPoolSize" value="10" /> 
+		  <property name="idleConnectionTestPeriod" value="1800" /> 
+		  <property name="testConnectionOnCheckout" value="false" /> 
+		  <property name="acquireRetryAttempts" value="0" /> 
+		  <property name="acquireRetryDelay" value="30000" /> 
+		  <property name="breakAfterAcquireFailure" value="false" /> 
+	  </bean>
+   
+   
+    <!--一memcached配置-->
+    <bean id="memCachedConfig" class="com.ways.framework.utils.memcached.MemCachedConfig" scope="singleton">
+        <property name="enabled"  value="false"/>
+        <property name="memCachedServerList">
+        	<list>
+        		<bean class="com.ways.framework.utils.memcached.MemCachedServer">
+        			<property name="host" value="192.168.1.122" />
+        			<property name="post" value="11211" />
+        			<property name="weight" value="1" />
+        		</bean>
+        	</list>
+        </property>
+        <property name="initConn"  value="50"/>
+        <property name="minConn"  value="50"/>
+        <property name="maxConn"  value="250"/>
+        <property name="maxIdle"  value="21600000"/>
+        <property name="maintSleep"  value="0"/>
+        <property name="socketTO"  value="10000"/>
+        <property name="socketConnTO"  value="0"/>
+    </bean>
+    
+     
+    <!-- 从权限系统库获取该系统的全部资源，按实际情况改下面SQL的应用系统编码就可以 -->
+    <bean id="sysConfig" class="com.ways.framework.model.SysConfig"  scope="singleton">
+    	<property name="macValidFlag" value="0" />
+    	<property name="appCode" value="BDIP_PC" />
+    	<property name="portalUrl"  value="http://192.168.7.158:9090"/>
+    	<property name="imageServerPath"  value="http://telecom.thinktanksgmmd.com/cms_picture"/>
+     </bean>
+    
+    
+</beans>

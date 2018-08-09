@@ -1,0 +1,40 @@
+<decorators defaultdir="/decorators">
+    <excludes>
+        <pattern>/40*.jsp</pattern>
+        <!-- add by fzt -->
+        <pattern>/global/*</pattern>
+        <pattern>/*.html</pattern>
+        <!-- add by yinlue -->
+        <pattern>/price/global/*</pattern>
+        <pattern>/product/global/*</pattern>
+        <pattern>/policy/global/*</pattern>
+        <!-- 2012/12/16 add by huangwenmei  PopModal -->
+        <pattern>/promotion/global/*</pattern>
+        <pattern>/terminal/global/*</pattern>
+        <pattern>/pricesale/global/*</pattern>
+        <pattern>/policy/saleIncentiveQuery/*</pattern>
+        <pattern>/price/priceIndex/*</pattern>
+        <pattern>/policy/promotion/*</pattern>
+        <pattern>/price/cityTpSelect/*</pattern>
+        <pattern>/policy/promotionGroup/*</pattern>
+        <pattern>/pricesale/VolumeByPriceRange/*</pattern>
+        <pattern>/manfSales/global/*</pattern>
+        <pattern>/policy/salePromotionAnalysis/*</pattern>
+        <pattern> /policy/submodelProfitGlobal/*</pattern>
+        <pattern>/pricesale/ScaleBySubModelSale/*</pattern>
+        <pattern>/pricesale/CompetingProduct/getSubmodelModal</pattern>
+        <pattern>/pricesale/CompetingProductGlobal/*</pattern>
+        <pattern>/salesQuery/modelSalesAmountFaw/*</pattern>
+        <pattern>/price/subModelPriceAnalysis/*</pattern>
+        <pattern>/price/msrpQuery/*</pattern>
+        <pattern>/salesQuery/salesAmountFaw/*</pattern>
+        <pattern>/salesAmountFaw/global/*</pattern>
+        <pattern>/price/cityPriceIndex/*</pattern>
+           <pattern>/price/cityPriceIndexGlobal/*</pattern>
+    </excludes> 
+
+    <decorator name="default" page="default.jsp">
+        <pattern>/*</pattern>
+    </decorator>
+    
+</decorators>

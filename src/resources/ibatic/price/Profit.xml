@@ -1,0 +1,1308 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTD SQL Map 2.0//EN" "http://ibatis.apache.org/dtd/sql-map-2.dtd" >
+<sqlMap namespace="profit">
+
+<!-- 初始化时间，从用户购买数据表取 -->
+<select id="initDate" resultClass="java.util.HashMap">
+	with t1 as(
+		<isEqual property="analysisContentType" compareValue="1">
+			<!-- 返利返点表有效数据范围 -->
+			select distinct 
+		           first_value(p.year||lpad(p.month,2,0)) over(order by p.year asc,p.month asc) begindate,
+		           first_value(p.year||lpad(p.month,2,0)) over(order by p.year desc,p.month desc) enddate
+		           from tb_autoprice_month_rebate p
+		</isEqual>
+		<isNotEqual property="analysisContentType" compareValue="1">
+			<!--成交价表有效数据范围 -->
+			Select *
+				   From (Select Max(To_Char(p.Price_Time, 'YYYYMM')) Enddate
+				           From Pms_Price_Promotion p),
+				        (Select Min(To_Char(p.Price_Time, 'YYYYMM')) Begindate
+				           From Pms_Price_Promotion p
+				          Where To_Char(p.Price_Time, 'YYYYMM') != '197001')
+		</isNotEqual>
+	)
+	 select 
+	 	   <![CDATA[
+	       case when g.sdate < t1.begindate then to_char(to_date(t1.begindate,'YYYY-MM'),'YYYY-MM') else to_char(to_date(substr(g.sdate,0,6),'YYYY-MM'),'YYYY-MM') end begindate
+	       ,case when g.edate > t1.enddate then to_char(to_date(t1.enddate,'YYYY-MM'),'YYYY-MM') else to_char(to_date(substr(g.edate,0,6),'YYYY-MM'),'YYYY-MM') end enddate
+	       ]]>
+	       from wias_user_purchase_date g 
+	       full join t1 on 1=1
+	       where g.group_id=$userId$ 
+	       <isEqual property="analysisContentType" compareValue="1">
+				 and g.model='businesspolicy'
+		   </isEqual>
+		   <isNotEqual property="analysisContentType" compareValue="1">
+				 and g.model='transprice'
+		   </isNotEqual>
+</select>
+
+<!-- 获取型号信息公共SQL，作用于导出 -->
+<sql id="getVersionInfo">
+	select 
+	       v.id onvid,
+	       v.sm versionName,
+	       v.car_config_bm versioncode,
+	       v.fyear modelyear,
+	       to_char(v.fzdy6,'YYYY-MM-DD') versionLaunchDate,
+	       v.typeid,
+	       v.typeideng typeiden,
+	       s.scs manfname,
+	       s.scs_eng manfnameen,
+	       b.name submodelname,
+	       b.name_eng submodelnameen,
+	       pl.pl discharge,
+	       pd.sm gearmode,
+	       <!-- 如果是大众和奥迪品牌的型号，需要将DCT转换为DSG -->
+	       case when v.pbrandid in(5,19) and pd.smeng = 'DCT' then 'DSG'
+	       else pd.smeng end gearmodeen,
+	       cs.lx bodytype,
+	       cs.lxeng bodytypeen,
+	       wg.grade_name_cn gradename,
+	       wg.grade_name_en gradenameen
+	       from cims_car_number v 
+	       inner join cims_car_brandchild b on b.id = v.fzdy2
+	       inner join cims_scs s on s.id = v.scs       
+	       inner join cims_car_pl pl on pl.id = v.pl
+	       inner join cims_car_pdfs pd on pd.id = v.pdfs
+	       inner join pms_car_hatchback cs on cs.id = v.hatchback
+	       left join wias_info_grade g on g.brand_id = b.parent_id and g.group_id = $userId$
+	       left join wias_grade wg on wg.grade_id = g.grade_id and wg.group_id = $userId$
+</sql>
+
+<!-- 根据型号ID获取子集关系 -->
+<sql id="getVersionSubsetRelationship">
+	with base as(
+		 select * from (
+	                select d.*,row_number() over(partition by d.groupid,d.listingdate order by d.vid desc) vrn 
+	                       from (
+	                          select 
+	                                v.id vid,v.parentid pid,to_char(v.fzdy6,'YYYYMM') listingdate,connect_by_root(v.id) groupid,v.fzdy2 submodelid,v.scs,v.pbrandid,c.sm changname
+	                                from cims_car_number v 
+	                                inner join cims_car_change c on c.id = v.fzdy7
+	                                where v.is_installed_flag != 1
+	                                connect by prior v.id = v.parentid
+	                                start with v.id in($vids$)
+	                          union
+	                          select 
+	                               	v.id vid,v.parentid pid,to_char(v.fzdy6,'YYYYMM') listingdate,connect_by_root(v.id) groupid,v.fzdy2 submodelid,v.scs,v.pbrandid,c.sm changname
+	                                from cims_car_number v 
+	                                inner join cims_car_change c on c.id = v.fzdy7
+	                                where v.is_installed_flag != 1
+	                                connect by v.id = prior v.parentid
+	                                start with v.id in($vids$)
+	                      ) d
+	        ) d where d.vrn = 1 And Exists (Select 1 From (Select n.Scs, n.Pbrandid From Cims_Car_Number n Where n.Id In ($vids$)) s Where s.Scs = d.Scs And s.Pbrandid = d.Pbrandid)
+	)
+</sql>
+
+<!-- 新增判断存在最新周时成交价需查询出周数据 -->
+<sql id="tp_Condition">
+<isEqual property="latestWeek" compareValue="false">
+	 And P.Batch_Yearmonth between '$beginDate$' and '$endDate$' and p.Week In(4,5)
+</isEqual>
+<isEqual property="latestWeek" compareValue="true">
+	 And ((P.Batch_Yearmonth between '$beginDate$' and '$endDate$' and p.Week In(4,5)) or
+<![CDATA[(P.Batch_Yearmonth = '$endDate$' and p.Week < 4 ))]]>
+</isEqual>
+</sql>
+
+<!-- 加载型号利润图形和表格数据 -->
+<select id="loadVersionProfitChartAndTable" resultClass="com.ways.app.price.model.VersionInfoEntity">
+	<include refid="getVersionSubsetRelationship" />
+	,t1 as(
+		<!-- 计算型号每月按子车型MIX归一后算出的成交价 ,如果没有MIX则取TP算术平均-->
+		select distinct e.vid,e.yearmonth,<!-- e.sub_model_id, -->
+			   <!-- case when e.value is not null then sum(e.mix) over(partition by e.vid,e.yearmonth)  
+					else avg(e.mix) over(partition by e.vid,e.yearmonth) 
+			   end tp -->
+			   Case When Max(e.MaxCityMix) over(partition by e.vid,e.yearmonth) Is Not Null 
+                    Then Sum(e.Mix) Over(Partition By e.Vid, e.Yearmonth)
+                    Else Avg(e.minTp) Over(Partition By e.vid,e.yearmonth) 
+                    End Tp
+		       from (
+		            select 
+		                   d.vid,d.yearmonth<!--,d.sub_model_id -->
+		                   ,case when min(d.value) is not null then to_char(min(d.tp) * ratio_to_report(sum(d.value)) over(partition by d.vid,d.yearmonth))
+			                   	 <!-- 判断城市个数如果城市个数为一的话,加权成交价直接为最低参考价 -->
+			                   	 <isEqual property="cityNum" compareValue="1">
+			                   	 	else to_char(min(d.tp))
+			                   	 </isEqual>
+			                   	 <!-- 判断城市个数如果城市个数不为一的话,加权成交价为零 -->
+			                   	 <isNotEqual property="cityNum" compareValue="1">
+			                   	    else null
+			                   	 </isNotEqual>			                   	 
+			                end mix,
+			               Min(d.tp) minTP,
+              			   Max(d.value) maxCityMix
+		                   from (
+		                   		select 
+		                        	 b.groupid vid,
+		                        	 <!-- 存在最新周数据时取成交价日期字段,不存在最新周数据时取月批次所属月份字段,因为月批次可能跨月取成交日期会出现查询到了上一个月 -->
+		                        	  <![CDATA[
+		                             Case When p.Week < 4 Then To_Char(p.Price_Time, 'YYYYMMDD') 
+		                             Else Replace(Batch_Yearmonth, '-', '') 
+		                             End Yearmonth,
+		                             ]]>
+		                             to_char(p.New_tp * 10000) tp,
+		                             p.region,
+		                             m.value,
+		                             b.submodelid as sub_model_id,
+		                             <!-- m.sub_model_id, -->
+		                             <!-- 成交价取城市中经销商最低的市场最低参考价,如果存在上下代时优先取下一代 -->
+		                             <!-- 成交价不是最新月数据去最末周数据,一般取第四周,由于某些月份存在第五周数据所以需要排序过滤,存在第五周数据时取第五周数据 -->
+		                             <!-- 第五周的数据分31号或下月03号数据所以需要对成交价批次进行划分,将下月03号这种数据归纳到当前月第五批次来 -->
+		                             Case When p.Week = 4 Or p.Week = 5
+	                             	  Then row_number() over(partition by b.Groupid,p.Region,p.Batch_Yearmonth Order By b.Vid Desc,p.Week Desc,p.New_tp Asc)
+									 <!-- 最新周数据不需要进行判断直接用成交价日期进行过滤获取 -->		                             	  
+		                                  Else row_number() over(partition by b.Groupid,p.Region,to_char(p.Price_time, 'YYYYMMDD') order by b.vid desc,p.New_tp asc) End rn 
+		                             from pms_price_promotion_auto_view p
+		                             inner join base b on b.vid = p.car_model
+		                             <![CDATA[
+		                             left join Transaction_Price_City_Mix m on m.sub_model_id = b.submodelid and m.city_id=p.region and m.year = (CASE WHEN to_char(p.price_time, 'YYYY') <= 2013 THEN 2013 ELSE to_char(p.price_time, 'YYYY') - 1 END)
+		                             ]]>
+		                             where 1 = 1 
+		                             <!-- 新增判断存在最新周时成交价需查询出周数据 -->
+		                             <include refid="tp_Condition"/>		                             
+		                             and p.region in($citys$) and p.New_tp is not null and p.New_tp != 0.00
+		                   )d where d.rn = 1
+		                   group by d.vid,d.yearmonth,d.region<!-- ,d.sub_model_id -->
+		       )e
+	)
+	,t2 as(
+		<!-- 查询型号每月在全国的最新指导价 -->
+	 	select * from ( 
+		      select distinct b.groupid vid
+		                      ,to_char(p.msrp_adjust_date, 'YYYYMM') yearmonth
+		                      ,to_char(p.new_msrp * 10000) msrp
+		                      ,row_number() over(partition by b.groupid, to_char(p.msrp_adjust_date, 'YYYY-MM') order by b.vid desc, p.msrp_adjust_date desc) rn
+		                      ,v.*
+		        from cims_direction_price_auto_view p
+		        inner join base b on b.vid = p.car_name
+		        inner join (
+		        	<include refid="getVersionInfo"/>
+		        ) v on v.onvid = b.vid
+		        where to_char(p.msrp_adjust_date, 'YYYY-MM') between '$beginDate$' and '$endDate$' and p.direction_price is not null
+		   ) where rn = 1
+	)
+	,t3 as(
+		<!-- 查询型号每月返利返点数据 -->
+		select * from(
+			select b.groupid vid,p.year||lpad(p.month,2,0) yearmonth
+				   ,p.rebate_count rebate_cash
+				   ,p.rebate_pst allowance
+				   ,p.reward_count ck_reward 
+				   ,row_number() over(partition by b.groupid,p.year,p.month order by b.vid desc) rebatern
+	       		   from tb_autoprice_month_rebate p 
+	       		   inner join base b on b.vid = p.version_id
+	       		   where p.year||'-'||lpad(p.month, 2, 0) between '$beginDate$' and '$endDate$'
+		) where rebatern = 1
+	)
+	,t4 as(
+		<!-- 时间维度补数主表 -->
+		select p.year||lpad(p.month_id,2,0) yearmonth,v.id versionid,b.name_eng||' '||v.typeideng versionChartname
+			   ,case when v.pbrandid = 19 and v.scs = 47 then '1' else '0' end isBase
+		       from pms_date_main p 
+		       full join cims_car_number v on 1 = 1
+		       full join cims_car_brandchild b on b.id = v.fzdy2
+		       where p.year||'-'||lpad(p.month_id,2,0) between '$beginDate$' and '$endDate$'
+		       and v.id in($vids$)
+	)
+	
+	select Case When d.Yearmonth Is Null Or Length(d.Yearmonth) = 6 Then T4.Yearmonth Else d.Yearmonth End Yearmonth,
+		   t4.versionid,t4.versionChartname,t4.isBase,d.*,decode(t4.yearmonth,b.listingdate,b.changname,'') changName
+		    from t4
+			 ,(
+			 	select T2.Vid,Decode(Length(T1.Yearmonth), 6, T2.Yearmonth, T1.Yearmonth) Yearmonth,
+       				   T2.Msrp,T2.Rn,T2.Onvid,T2.Versionname,T2.Versioncode,T2.Modelyear,T2.Versionlaunchdate,
+       				   T2.Typeid,T2.Typeiden,T2.Manfname,T2.Manfnameen,T2.Submodelname,T2.Submodelnameen,
+       				   T2.Discharge,T2.Gearmode,T2.Gearmodeen,T2.Bodytype,T2.Bodytypeen,T2.Gradename,T2.Gradenameen,t1.tp
+					   ,t2.msrp-t3.rebate_cash-t3.allowance-t3.ck_reward sellerCost
+					   ,t2.msrp-t3.rebate_cash-t3.allowance invoicePrice
+					   ,t3.rebate_cash rebatePrice
+					   ,t3.ck_reward rewardAssessment
+					   ,t3.allowance promotionalAllowance
+					   ,t1.tp-(t2.msrp-t3.rebate_cash-t3.allowance) modelProfit
+					   from t2,t1,t3 
+					   where t2.vid = t1.vid(+) and T2.Yearmonth = Substr(T1.Yearmonth(+), 0, 6)
+					         and t2.vid = t3.vid(+) and t2.yearmonth = t3.yearmonth(+)
+			 )d 
+			 ,base b 
+			 where t4.versionid = d.vid(+) and T4.Yearmonth = Substr(d.Yearmonth(+), 0, 6)
+			 	   and t4.versionid = b.groupid(+) and t4.yearmonth = b.listingdate(+)
+		     order by t4.versionid,(Case When d.Yearmonth Is Null Or Length(d.Yearmonth) = 6 Then T4.Yearmonth Else d.Yearmonth End)
+</select>
+
+<!-- 根据界面选取对象查询型号信息 -->
+<sql id="getVersionInfoByObject">    
+	    Select v.Id vid,
+	           v.Sm Versionname,
+	           v.Car_Config_Bm Versioncode,
+	           v.Fyear Modelyear,
+	           b.Name_Eng || ' ' || v.Typeideng Versionchartname,
+	           To_Char(v.Fzdy6, 'YYYY-MM-DD') Versionlaunchdate,
+	           v.Typeid,
+	           v.Typeideng Typeiden,
+	           v.o_car_number_id,
+	           v.is_installed_flag,
+	           <isEqual property="objectType" compareValue="2">
+		      	b.id ObjId,
+	            b.Name objName,
+	            b.Name_Eng objNameEn,
+	      	</isEqual>
+	      	<isEqual property="objectType" compareValue="3">
+	      		s.id ObjId,
+	           	s.Scs objName,
+	           	s.Scs_Eng objNameEn,
+	      	</isEqual>
+	           s.id manfId,
+	           s.Scs Manfname,
+	           s.Scs_Eng Manfnameen,
+	           b.id SubModelId,
+	           b.Name Submodelname,
+	           b.Name_Eng Submodelnameen,
+	           Pl.Pl Discharge,
+	           Pd.Sm Gearmode,
+	           Case When v.Pbrandid In (5, 19) And Pd.Smeng = 'DCT' Then 'DSG' Else Pd.Smeng End Gearmodeen,
+	           Cs.Lx Bodytype,
+	           Cs.Lxeng Bodytypeen,
+	           Wg.Grade_Id As GradeId,
+	           Wg.Grade_Name_Cn Gradename,
+	           Wg.Grade_Name_En Gradenameen,
+	           Case When b.pbrandid = 19 And b.scs = 47 Then '1' Else '0' End isBase 
+	      From Cims_Car_Brandchild b,
+		    Cims_Car_Number     v,
+		    View_Cims_Scs       s,
+		    Cims_Car_Pl         Pl,
+		    Cims_Car_Pdfs       Pd,
+		    Pms_Car_Hatchback   Cs,
+		    Wias_Info_Grade     g,
+		    Wias_Grade          Wg
+		 Where b.Id = v.Fzdy2
+	    And s.Manfid = b.Scs
+	    And s.Brandid = b.Pbrandid
+	    And Pl.Id = v.Pl
+	    And Pd.Id = v.Pdfs
+	    And Cs.Id = v.Hatchback
+	    And g.Brand_Id = b.Parent_Id
+	    And g.Group_Id = $userId$
+	    And Wg.Grade_Id = g.Grade_Id
+	    And Wg.Group_Id = $userId$
+	     <isEqual property="objectType" compareValue="2">
+	     	And b.id in($modelIds$)
+	     </isEqual>
+	     <isEqual property="objectType" compareValue="3">
+	     	And s.id in($manfs$)
+	     </isEqual>
+</sql>
+
+<sql id="getVersionColumn">
+<isEqual property="objectType" compareValue="2">
+	Select Distinct v.ObjId,v.ManfId,v.Manfname,v.Manfnameen,v.GradeId,v.Gradename,v.Gradenameen,v.Submodelid,
+           v.Submodelnameen,v.Submodelname,v.Isbase
+  	  From Version v Where v.Is_Installed_Flag != 1
+</isEqual>
+<isEqual property="objectType" compareValue="3">
+	Select Distinct v.ObjId,v.ManfId,v.Manfname,v.Manfnameen,'' GradeId,'' Gradename,'' Gradenameen,'' Submodelid,
+           '' Submodelnameen,'' Submodelname,v.Isbase
+  	  From Version v Where v.Is_Installed_Flag != 1
+</isEqual>
+</sql>
+
+<!-- 加载车型或厂商利润图形和表格数据 -->
+<select id="loadModelProfitChartAndTable" resultClass="com.ways.app.price.model.ObjectInfoEntity">
+With Version As(
+<include refid="getVersionInfoByObject"/>
+)
+<!-- 查询所选城市,时间段成交价及城市Mix数据 -->
+,city_mix As(
+ Select /*+ RULE*/
+ 		v.Vid,
+ 		v.ObjId,
+        to_char(P.New_tp * 10000) tp,
+        P.Region,
+        <!-- 每月取最末批次日期(最末批次成交价可能跨月所以取批次所在月份字段) -->
+        <!-- 最新月不存在最末批次所以还是取成交价日期 -->
+       	Case When P.Week = 4 Or P.Week = 5 
+       		 Then Replace(Batch_Yearmonth, '-', '')
+       		 Else To_Char(P.Price_Time, 'YYYYMMDD')
+        End Yearmonth,
+        <!-- 每月最低成交价获取时也是通过批次所在月份字段分组,通过周字段排序取最末周下最低成交价 --> 
+        <!-- 最新月无需取批次所在月份字段取判断 -->       
+      	Case When P.Week = 4 Or P.Week = 5 
+     		 Then row_number() over(partition by v.Vid,P.region,P.Batch_Yearmonth order by v.vid Desc,P.Week desc,P.New_tp asc)
+      	 	 Else row_number() over(partition by v.Vid,P.region,to_char(P.price_time, 'YYYYMMDD') order by v.vid desc,P.New_tp asc)
+      	End rn,
+        m.Value
+   From Pms_Price_Promotion_Auto_View P
+  Inner Join Version v On P.Car_Model = v.Vid
+   <!-- 斜对应关系查询出成交价城市Mix -->
+   Left Join Transaction_Price_City_Mix m On m.Sub_Model_Id = v.subModelId And m.City_Id = P.Region
+                                         And m.Year = (Case When <![CDATA[P.Price_Year <= 2013]]> Then 2013
+                                                            Else P.Price_Year - 1 End)
+    Where v.Is_Installed_Flag != 1
+    And P.Region In($citys$) And P.New_tp Is Not Null And P.New_tp != 0.00
+    <!-- 新增判断存在最新周时成交价需查询出周数据 -->
+    <include refid="tp_Condition"/>
+	
+)
+,version_tp As(
+<!-- 获取型号成交价sum(min(tp)*([城市x]Mix/sum([城市All]Mix))) -->
+select distinct e.vid,e.ObjId,e.yearmonth,
+			     <!-- 当前型号所有城市Mix不为为Null时型号成交价sum(min(tp)*([城市x]Mix/sum([城市All]Mix)))
+			     	  ,为Null时取当前型号最低成交价的算术平均	
+			      -->
+				 Case When Max(e.MaxCityMix) > 0 
+                      Then Sum(e.Mix)
+                      Else Avg(e.minTp)
+                      End Tp  From
+        (
+          Select c.vid,c.ObjId,c.yearmonth,Max(c.Value) MaxCityMix,Min(c.tp) minTp,c.region,
+          <!-- 城市Mix归一,获取型号在所选城市的Mix权重 -->
+          case when min(c.value) is not Null then to_char(min(c.tp) * ratio_to_report(sum(c.value)) over(partition by c.vid,c.yearmonth))
+               <!-- 判断城市个数如果城市个数为一的话,加权成交价直接为最低参考价 -->
+               <isEqual property="cityNum" compareValue="1">
+               	 	else to_char(min(c.tp))
+               </isEqual>
+               <!-- 判断城市个数如果城市个数不为一的话,加权成交价为零 -->
+               <isNotEqual property="cityNum" compareValue="1">
+               	    else null
+               </isNotEqual>                                                                     
+               end mix
+          From  city_mix c
+          where c.rn = 1  
+          Group By c.Vid,c.ObjId,c.Yearmonth,c.Region
+         ) e
+       Group By e.Vid, e.Objid, e.Yearmonth   
+)
+<!-- 时间段缺失日期补充 -->
+,Full_Time As(
+      Select p.ym,v.Vid,v.ObjId
+             FROM pms_date_main p,Version v
+             Where p.ym Between Replace('$beginDate$','-','') And Replace('$endDate$','-','')
+             And v.is_installed_flag != 1            
+)
+<!-- 获取型号加权销量(型号销量/车型销量通过型号与日期分组) -->
+,weight_sales As(
+	 Select e.Version_Sale,e.Objid,e.Vid,e.Yearmonth,
+	        Ratio_To_Report(Sum(e.Version_Sale)) Over(Partition By e.Objid, e.Yearmonth) As Salemix
+	  From (
+	  		 Select /*+RULE*/ Sum(s.Sales) As Version_Sale,
+	               Decode(v.Is_Installed_Flag, 1, v.o_Car_Number_Id, v.Vid) As Vid,v.Objid,s.Yearmonth
+	          From V2_Version_Sales s,Version v 
+	         Where s.Version_id = v.Vid
+	         Group By Decode(v.Is_Installed_Flag, 1, v.o_Car_Number_Id, v.Vid),v.Objid,s.Yearmonth
+	        ) e
+	 Group By e.Version_Sale, e.Objid, e.Vid, e.Yearmonth
+)
+<!-- 补全缺失日期段数据 -->
+,all_weight_sales As(
+    Select 
+          s.Version_sale,s.Vid,s.ObjId,s.ym,
+          Case When s.saleMix Is Null And s.ym > m.maxDate Then 
+               (<!--如果价格月份无销量占比且价格时间大于销量数据最大时间,则当前价格月份对应销量数据为销量数据最大时间所对应销量占比  -->
+                    Select t.Salemix FROM weight_sales t Where t.Vid = s.Vid  And t.Yearmonth = m.Maxdate
+               )
+               Else 
+               s.saleMix
+          End saleMix
+          FROM (<!-- 补全无销量的月份型号数据 -->
+               Select t.*,s.version_sale,s.salemix
+                      FROM Full_Time t,weight_sales s
+                      Where t.ym = s.yearmonth(+) And t.vid = s.vid(+) And t.ObjId = s.ObjId(+)
+          ) s,(Select Max(s.Yearmonth) maxdate From V2_Version_Sales s) m
+)
+<!-- 型号权重成交价(型号成交价*型号销量权重) -->
+,weight_tp As(
+	  Select tp.ObjId,tp.ym As yearmonth,
+	  			<!-- 当前车型有销量数据时车型TP为SUM(型号成交价*型号销量权重) 
+	  				 ,无车型销量则取SUM(型号成交价)
+	  			-->
+			Case When Max(tp.Salemix) Is Not Null
+		    Then Decode(Sum(Weight_Tp), 0, Avg(Tp), Sum(Weight_Tp))
+		    Else Avg(tp)
+		    End Weight_Tp
+	   FROM (
+	       Select s.Vid,  
+	              s.ObjId,
+	              Decode(ct.yearmonth,Null,s.ym,ct.yearmonth) ym,
+	              Ct.Tp,
+	              s.Version_Sale,
+	              s.salemix,
+	              Case When Ct.Tp Is Not Null And Sum(s.Salemix)Over(Partition By s.Objid,Ct.Yearmonth) > 0
+	              	   Then Nvl(Ct.Tp,0) * nvl(s.salemix / Sum(s.Salemix)Over(Partition By s.Objid,Ct.Yearmonth),0) 
+	              	   Else 0
+	               End weight_tp
+	         From version_tp Ct,all_weight_sales s 
+	        Where Ct.Vid(+) = s.Vid And Ct.ObjId(+) = s.ObjId And subStr(Ct.Yearmonth(+),0,6) = s.ym
+	  ) tp 
+   <!-- 当存在最新周价格时,过滤最新月批次数据 -->
+   <!-- 当车型或厂商下存在价格型号个数对应不上销量型号个数时通过型号价格过滤 -->
+   <isEqual property="latestWeek" compareValue="true">
+     Where tp.ym != Replace('$endDate$','-','')
+   </isEqual> 
+   Group By tp.ObjId,tp.ym
+)
+<!-- 获取型号每月最新指导价信息 -->
+,Msrp As(       
+    Select * From 
+           (
+            Select Distinct Replace(P.Msrp_Adjust_Date_Format,'-','') Yearmonth,To_Char(p.New_Msrp * 10000) Msrp,
+                   Row_Number() Over(Partition By v.Vid, P.Msrp_Adjust_Date_Format Order By v.Vid Desc, p.Msrp_Adjust_Date Desc) Rn,v.*
+              From Cims_Direction_Price_Auto_View p
+              Inner Join Version v On v.Vid = p.Car_Name
+              Where P.Msrp_Adjust_Date_Format Between '$beginDate$' And '$endDate$'
+                And p.Direction_Price Is Not Null
+                And v.Is_Installed_Flag != 1
+            ) msrp
+     Where Rn = 1
+)
+<!-- 加权指导价信息获取(最新指导价*加权销量) -->
+,weight_Msrp As(
+	    Select objId,YearMonth,
+	    		Case When Max(Salemix) Is Not Null 
+	    			 Then Decode(Sum(Weight_Msrp), 0, Avg(Msrp), Sum(Weight_Msrp))
+	    			 Else Avg(Msrp) 
+	    			 End Weight_Msrp 
+	    		FROM (
+		         Select Sales.Vid, Sales.ObjId, Sales.Ym As Yearmonth, Sales.saleMix,Msrp.Msrp,
+		                nvl(Msrp.Msrp,0) * nvl(Sales.salemix / Sum(Sales.Salemix)Over(Partition By Sales.Objid, Msrp.Yearmonth),0) weight_Msrp
+		           From Msrp Msrp, All_Weight_Sales Sales
+		          Where Msrp.Vid(+) = Sales.Vid
+		            And Msrp.Yearmonth(+) = Sales.Ym
+	          ) Group By ObjId,YearMonth
+)
+<!-- 通过未加权的成交价,指导价,型号返利数据计算获取型号返利信息 -->
+,Rebate As
+(
+ Select rebate.vid,
+        Decode(Tp.yearmonth,Null,rebate.yearmonth,Tp.yearmonth) yearmonth,
+        Msrp.Msrp - Rebate.Rebate_Cash - Rebate.Allowance - Rebate.Ck_Reward Sellercost,
+        Msrp.Msrp - Rebate.Rebate_Cash - Rebate.Allowance Invoiceprice,
+        Rebate.Rebate_Cash Rebateprice,
+        Rebate.Ck_Reward Rewardassessment,
+        Rebate.Allowance Promotionalallowance,
+        Tp.Tp -(Msrp.Msrp - Rebate.Rebate_Cash - Rebate.Allowance) Modelprofit 
+       FROM Version_Tp tp,Msrp msrp,
+        (Select *  From (Select b.vid,
+                           b.objid,
+                           p.Year || Lpad(p.Month, 2, 0) Yearmonth,
+                           p.Rebate_Count Rebate_Cash,
+                           p.Rebate_Pst Allowance,
+                           p.Reward_Count Ck_Reward,
+                           Row_Number() Over(Partition By b.vid, p.Year, p.Month Order By b.vid Desc) Rebatern
+                      From Tb_Autoprice_Month_rebate p
+                     Inner Join Version b On b.vid = p.version_id And b.Is_Installed_Flag != 1
+                     Where p.Year || '-' || Lpad(p.Month, 2, 0) Between '$beginDate$' And '$endDate$')
+             Where Rebatern = 1
+         ) rebate
+     Where Tp.vid = Msrp.vid(+)
+       And Substr(Tp.Yearmonth, 0, 6) = Msrp.Yearmonth(+)
+       And Msrp.vid = Rebate.vid(+)
+       And Msrp.Yearmonth = Rebate.Yearmonth(+)         
+)
+<!-- 加权车型返利数据获取(通过型号返利信息并通过销量计算出车型或生产商返利信息) -->
+,weight_Rebate As(
+	  Select Objid,Yearmonth,
+	        Case When Max(Salemix) Is Not Null Then Decode(Sum(Weight_Sellercost), 0, Avg(Sellercost), Sum(Weight_Sellercost)) Else Avg(Sellercost) End Weight_Sellercost,
+	        Case When Max(Salemix) Is Not Null Then Decode(Sum(Weight_Invoiceprice), 0, Avg(Invoiceprice), Sum(Weight_Invoiceprice)) Else Avg(Invoiceprice) End Weight_Invoiceprice,
+	        Case When Max(Salemix) Is Not Null Then Decode(Sum(Weight_Rebateprice), 0, Avg(Rebateprice), Sum(Weight_Rebateprice)) Else Avg(Rebateprice) End Weight_Rebateprice,
+	        Case When Max(Salemix) Is Not Null Then Decode(Sum(Weight_Rewardassessment), 0, Avg(Rewardassessment), Sum(Weight_Rewardassessment)) Else Avg(Rewardassessment) End Weight_Rewardassessment,
+	  		Case When Max(Salemix) Is Not Null Then Decode(Sum(Weight_Promotionalallowance), 0, Avg(Promotionalallowance), Sum(Weight_Promotionalallowance)) Else Avg(Promotionalallowance) End Weight_Promotionalallowance,
+	        Case When Max(Salemix) Is Not Null Then Decode(Sum(Weight_Modelprofit), 0, Avg(Modelprofit), Sum(Weight_Modelprofit)) Else Avg(Modelprofit)End Weight_Modelprofit
+	   From (Select Sales.Vid,
+	                Sales.Objid,
+	                Decode(rebate.yearmonth,Null,Sales.Ym,rebate.yearmonth) Yearmonth,
+	                Sales.Salemix,
+	                rebate.Sellercost,
+	                rebate.Invoiceprice,
+	                rebate.Rebateprice,
+	                rebate.Rewardassessment,
+	                rebate.Promotionalallowance,
+	                rebate.Modelprofit,
+	                Nvl(rebate.Sellercost, 0) * Nvl(Sales.Salemix / Sum(Sales.Salemix) Over(Partition By Sales.Objid, rebate.Yearmonth),0) Weight_Sellercost,
+	                Nvl(rebate.Invoiceprice, 0) * Nvl(Sales.Salemix / Sum(Sales.Salemix) Over(Partition By Sales.Objid, rebate.Yearmonth),0) Weight_Invoiceprice,
+	                Nvl(rebate.Rebateprice, 0) * Nvl(Sales.Salemix / Sum(Sales.Salemix) Over(Partition By Sales.Objid, rebate.Yearmonth),0) Weight_Rebateprice,
+	                Nvl(rebate.Rewardassessment, 0) * Nvl(Sales.Salemix / Sum(Sales.Salemix) Over(Partition By Sales.Objid, rebate.Yearmonth),0) Weight_Rewardassessment,
+	    			Nvl(rebate.Promotionalallowance, 0) * Nvl(Sales.Salemix / Sum(Sales.Salemix) Over(Partition By Sales.Objid, rebate.Yearmonth),0) Weight_Promotionalallowance,                 
+	    			Nvl(rebate.Modelprofit, 0) * Nvl(Sales.Salemix / Sum(Sales.Salemix) Over(Partition By Sales.Objid, rebate.Yearmonth),0) Weight_Modelprofit
+	           From rebate rebate, All_Weight_Sales Sales
+	          Where rebate.Vid(+) = Sales.Vid
+	            And Substr(rebate.Yearmonth(+),0,6) = Sales.Ym
+	            And rebate.Modelprofit Is Not Null
+	     )
+	  Group By Objid, Yearmonth
+)
+Select v.manfId,v.manfName,v.manfNameen,v.GradeId,v.Gradename,v.Gradenameen,v.subModelId,v.Submodelnameen,v.Submodelname,v.isBase,rs.*
+	    FROM (
+	    select tp.yearmonth,
+	           tp.ObjId,
+	           tp.weight_tp As tp,
+	           msrp.weight_Msrp As msrp,
+	           rebate.weight_SellerCost sellerCost,
+	           rebate.weight_InvoicePrice invoicePrice,
+	           rebate.weight_RebatePrice rebatePrice,
+	           rebate.weight_RewardAssessment rewardAssessment,
+	           rebate.weight_PromotionalAllowance promotionalAllowance,
+	           rebate.weight_ModelProfit modelProfit         
+	       from weight_tp tp,weight_Msrp msrp,weight_Rebate rebate         
+	       where tp.ObjId = msrp.ObjId(+) and subStr(tp.yearmonth,0,6) = msrp.yearmonth(+)               
+	         and tp.ObjId = rebate.ObjId(+) and tp.yearmonth = rebate.yearmonth(+)) rs,
+	(
+		<include refid="getVersionColumn"/>
+	)v
+Where rs.ObjId = v.ObjId(+)	
+Order By rs.ObjId,rs.yearmonth
+</select>
+
+<!-- 下载车型或厂商利润数据 -->
+<select id="exportProfitData" resultClass="com.ways.app.price.model.VersionInfoEntity">
+With Version As(
+<include refid="getVersionInfoByObject"/>
+)
+<!-- 时间段缺失日期补充 -->
+,Full_Time As(
+	     Select p.ym,v.Vid,v.ObjId
+	            FROM pms_date_main p,Version v
+	            Where p.ym Between Replace('$beginDate$','-','') And Replace('$endDate$','-','')
+	            And v.is_installed_flag != 1            
+)
+<!-- 获取型号加权销量(型号销量/车型销量通过型号与日期分组) -->
+,weight_sales As(
+	 Select e.Version_Sale,e.Objid,e.Vid,e.Yearmonth,
+	        Ratio_To_Report(Sum(e.Version_Sale)) Over(Partition By e.Objid, e.Yearmonth) As Salemix
+	  From (
+	  		 Select /*+RULE*/ Sum(s.Sales) As Version_Sale,
+	               Decode(v.Is_Installed_Flag, 1, v.o_Car_Number_Id, v.Vid) As Vid,v.Objid,s.Yearmonth
+	          From V2_Version_Sales s,Version v 
+	         Where s.Version_id = v.Vid
+	         Group By Decode(v.Is_Installed_Flag, 1, v.o_Car_Number_Id, v.Vid),v.Objid,s.Yearmonth
+	        ) e
+	 Group By e.Version_Sale, e.Objid, e.Vid, e.Yearmonth
+)
+<!-- 补全缺失日期段数据 -->
+,all_weight_sales As(
+    Select 
+         s.Vid,s.ObjId,s.ym,
+         Case When s.Version_sale Is Null And s.ym > m.maxDate Then 
+              (<!--如果价格月份无销量且价格时间大于销量数据最大时间,则当前价格月份对应销量数据为销量数据最大时间所对应销量  -->
+                   Select t.Version_sale FROM weight_sales t Where t.Vid = s.Vid  And t.Yearmonth = m.Maxdate
+              )
+              Else 
+              s.Version_sale
+         End Version_sale,
+         Case When s.saleMix Is Null And s.ym > m.maxDate Then 
+              (<!--如果价格月份无销量占比且价格时间大于销量数据最大时间,则当前价格月份对应销量数据为销量数据最大时间所对应销量占比  -->
+                   Select t.Salemix FROM weight_sales t Where t.Vid = s.Vid  And t.Yearmonth = m.Maxdate
+              )
+              Else 
+              s.saleMix
+         End saleMix
+         FROM (<!-- 补全无销量的月份型号数据 -->
+              Select t.*,s.version_sale,s.salemix
+                     FROM Full_Time t,weight_sales s
+                     Where t.ym = s.yearmonth(+) And t.vid = s.vid(+) And t.ObjId = s.ObjId(+)
+         ) s,(Select Max(s.Yearmonth) maxdate From V2_Version_Sales s) m
+)
+<!-- 查询所选城市,时间段成交价及城市Mix数据 -->
+,city_mix As(
+ Select /*+ RULE*/
+ 		v.Vid,
+ 		v.ObjId,
+        to_char(P.New_tp * 10000) tp,
+        P.Region,
+        <!-- 每月取最末批次日期(最末批次成交价可能跨月所以取批次所在月份字段) -->
+        <!-- 最新月不存在最末批次所以还是取成交价日期 -->
+        Case When P.Week = 4 Or P.Week = 5 
+        	 Then Replace(Batch_Yearmonth, '-', '') 
+        	 Else To_Char(P.Price_Time, 'YYYYMMDD') 
+         End Yearmonth,
+        <!-- 每月最低成交价获取时也是通过批次所在月份字段分组,通过周字段排序取最末周下最低成交价 --> 
+        <!-- 最新月无需取批次所在月份字段取判断 -->
+        Case When P.Week = 4 Or P.Week = 5 
+        	 Then row_number() over(partition by v.Vid,P.region,P.Batch_Yearmonth order by v.vid Desc,P.Week Desc,P.New_tp Asc)
+        	 Else row_number() over(partition by v.Vid,P.region,to_char(P.price_time, 'YYYYMMDD') order by v.vid desc,P.New_tp asc)
+        	 End  rn,
+        m.Value
+   From Pms_Price_Promotion_Auto_View P
+  Inner Join Version v On P.Car_Model = v.Vid
+   <!-- 斜对应关系查询出成交价城市Mix -->
+   Left Join Transaction_Price_City_Mix m On m.Sub_Model_Id = v.subModelId And m.City_Id = P.Region
+                                         And m.Year = (Case When <![CDATA[P.Price_Year <= 2013]]> Then 2013
+                                                            Else P.Price_Year - 1 End)
+    Where v.Is_Installed_Flag != 1
+    And P.Region In($citys$) And P.New_tp Is Not Null And P.New_tp != 0.00
+    <!-- 新增判断存在最新周时成交价需查询出周数据 -->
+    <include refid="tp_Condition"/>
+	
+)
+,version_tp As(
+<!-- 获取型号成交价sum(min(tp)*([城市x]Mix/sum([城市All]Mix))) -->
+select distinct e.vid,e.ObjId,e.yearmonth,
+			     <!-- 当前型号所有城市Mix不为为Null时型号成交价sum(min(tp)*([城市x]Mix/sum([城市All]Mix)))
+			     	  ,为Null时取当前型号最低成交价的算术平均	
+			      -->
+				 Case When Max(e.MaxCityMix) > 0 
+                      Then Sum(e.Mix)
+                      Else Avg(e.minTp)
+                      End Tp  From
+        (
+          Select c.vid,c.ObjId,c.yearmonth,Max(c.Value) MaxCityMix,Min(c.tp) minTp,c.region,
+          <!-- 城市Mix归一,获取型号在所选城市的Mix权重 -->
+          case when min(c.value) is not Null then to_char(min(c.tp) * ratio_to_report(sum(c.value)) over(partition by c.vid,c.yearmonth))
+               <!-- 判断城市个数如果城市个数为一的话,加权成交价直接为最低参考价 -->
+               <isEqual property="cityNum" compareValue="1">
+               	 	else to_char(min(c.tp))
+               </isEqual>
+               <!-- 判断城市个数如果城市个数不为一的话,加权成交价为零 -->
+               <isNotEqual property="cityNum" compareValue="1">
+               	    else null
+               </isNotEqual>                                                                     
+               end mix
+          From  city_mix c
+          where c.rn = 1  
+          Group By c.Vid,c.ObjId,c.Yearmonth,c.Region
+         ) e
+       Group By e.Vid, e.Objid, e.Yearmonth   
+)
+<!-- 获取型号每月最新指导价信息 -->
+,Msrp As(       
+    Select * From 
+           (
+            Select Distinct Replace(P.Msrp_Adjust_Date_Format,'-','') Yearmonth,To_Char(p.New_Msrp * 10000) Msrp,
+                   Row_Number() Over(Partition By v.Vid, P.Msrp_Adjust_Date_Format Order By v.Vid Desc, p.Msrp_Adjust_Date Desc) Rn,v.*
+              From Cims_Direction_Price_Auto_View p
+              Inner Join Version v On v.Vid = p.Car_Name
+              Where P.Msrp_Adjust_Date_Format Between '$beginDate$' And '$endDate$'
+                And p.Direction_Price Is Not Null
+                And v.Is_Installed_Flag != 1
+            ) msrp
+     Where Rn = 1
+),
+Rebate As
+ (Select *
+    From (Select b.Vid,
+                 b.Objid,
+                 p.Year || Lpad(p.Month, 2, 0) Yearmonth,
+                 p.Rebate_Count Rebate_Cash,
+                 p.Rebate_Pst Allowance,
+                 p.Reward_Count Ck_Reward,
+                 Row_Number() Over(Partition By b.Vid, p.Year, p.Month Order By b.Vid Desc) Rebatern
+            From Tb_Autoprice_Month_Rebate p
+           Inner Join Version b
+              On b.Vid = p.Version_Id
+             And b.Is_Installed_Flag != 1
+           Where p.Year || '-' || Lpad(p.Month, 2, 0) Between '$beginDate$' And '$endDate$')
+   Where Rebatern = 1)
+Select Ct.Yearmonth,v.Vid Versionid,v.Versionchartname,v.Isbase,
+       Msrp.Msrp,Ct.Tp,v.Versionname,v.Versioncode,v.Modelyear,
+       v.Versionlaunchdate,v.Typeid,v.Typeiden,v.Manfname,v.Manfnameen,
+       v.Submodelname,v.Submodelnameen,v.Discharge,v.Gearmode,
+       v.Gearmodeen,v.Bodytype,v.Bodytypeen,v.Gradename,v.Gradenameen,
+       Msrp.Msrp - Rebate.Rebate_Cash - Rebate.Allowance - Rebate.Ck_Reward Sellercost,
+       Msrp.Msrp - Rebate.Rebate_Cash - Rebate.Allowance Invoiceprice,
+       Rebate.Rebate_Cash Rebateprice,
+       Rebate.Ck_Reward Rewardassessment,
+       Rebate.Allowance Promotionalallowance,
+       Ct.Tp - (Msrp.Msrp - Rebate.Rebate_Cash - Rebate.Allowance) Modelprofit,
+       S.Version_Sale versionSale
+  From All_Weight_Sales s,
+       Version_Tp       Ct,
+       Msrp             Msrp,
+       Rebate           Rebate,
+       Version          v
+ Where Ct.Vid(+) = s.Vid
+   And Ct.Objid(+) = s.Objid
+   And Substr(Ct.Yearmonth(+), 0, 6) = s.Ym
+   And Msrp.Vid(+) = s.Vid
+   And Msrp.Objid(+) = s.Objid
+   And Msrp.Yearmonth(+) = s.Ym
+   And Rebate.Vid(+) = s.Vid
+   And Rebate.Objid(+) = s.Objid
+   And Rebate.Yearmonth(+) = s.Ym
+   And s.Vid = v.Vid(+)
+   And Ct.Tp > 0
+ Order By s.Vid, Ct.Yearmonth
+</select>
+
+<!-- 加载城市利润图形和表格数据  -->
+<select id="loadCityProfitChartAndTable" resultClass="com.ways.app.price.model.VersionInfoEntity">
+	<include refid="getVersionSubsetRelationship" />
+	,t1 as(
+		  <!-- 查询型号城市成交价 -->
+		  select 
+	             d.vid,d.yearmonth,d.tp,d.cityId oncityid
+	             from (
+			           select b.groupid vid,
+			           <!-- 每月取最末批次日期(最末批次成交价可能跨月所以取批次所在月份字段) -->
+        			   <!-- 最新月不存在最末批次所以还是取成交价日期 -->
+	                 <![CDATA[Case When p.Week < 4 
+	                     	 	   Then To_Char(p.Price_Time, 'YYYYMMDD')
+	                 			   Else Replace(Batch_Yearmonth, '-', '')
+	             			   End Yearmonth,]]>
+	                          to_char(p.New_tp * 10000) tp,p.region cityId,
+		                      <!-- 成交价取城市中经销商最的市场最低参考价,如果存在上下代时优先取下一代 -->
+		                      <!-- 每月最低成交价获取时也是通过批次所在月份字段分组,通过周字段排序取最末周下最低成交价 --> 
+        					  <!-- 最新月无需取批次所在月份字段取判断 -->
+		                   	  Case When p.Week = 4 Or p.Week = 5 
+		                   	  	   Then Row_Number()Over(Partition By b.Groupid,p.Region,p.Batch_Yearmonth Order By b.Vid Desc,p.Week Desc,p.New_tp Asc)
+		                  		   Else Row_Number()Over(Partition By b.Groupid,p.Region,To_Char(p.Price_Time, 'YYYYMMDD') Order By b.Vid Desc,p.New_tp Asc)
+		              		   End Rn
+                       from pms_price_promotion_auto_view p
+                       inner join base b on b.vid = p.car_model
+                       where 1 = 1
+                       and p.region in($citys$) and p.New_tp is not null
+             			<!-- 新增判断存在最新周时成交价需查询出周数据 -->
+					<include refid="tp_Condition"/>
+             )d where d.rn = 1
+	)
+	,t2 as(
+		<!-- 查询型号每月在全国的最新指导价 -->
+		select * from ( 
+		      select distinct b.groupid vid
+		                      ,to_char(p.msrp_adjust_date, 'YYYYMM') yearmonth
+		                      ,to_char(p.new_msrp * 10000) msrp
+		                      ,row_number() over(partition by b.groupid, to_char(p.msrp_adjust_date, 'YYYY-MM') order by b.vid desc, p.msrp_adjust_date desc) rn
+		                      ,v.*
+		        from cims_direction_price_auto_view p
+		        inner join base b on b.vid = p.car_name
+		        inner join (
+		        	<include refid="getVersionInfo"/>
+		        ) v on v.onvid = b.vid
+		        where to_char(p.msrp_adjust_date, 'YYYY-MM') between '$beginDate$' and '$endDate$' and p.direction_price is not null
+		   ) where rn = 1
+	)
+	,t3 as(
+		<!-- 查询型号每月返利返点数据 -->
+		select * from(
+			select b.groupid vid,p.year||lpad(p.month,2,0) yearmonth
+				   ,p.rebate_count rebate_cash
+				   ,p.rebate_pst allowance
+				   ,p.reward_count ck_reward 
+				   ,row_number() over(partition by b.groupid,p.year,p.month order by b.vid desc) rebatern
+	       		   from tb_autoprice_month_rebate p 
+	       		   inner join base b on b.vid = p.version_id
+	       		   where p.year||'-'||lpad(p.month, 2, 0) between '$beginDate$' and '$endDate$'
+		) where rebatern = 1
+	)
+	,t4 as(
+		<!-- 时间维度补数主表 -->
+		select p.year||lpad(p.month_id,2,0) yearmonth,v.id versionid
+			   ,d.*
+		       from pms_date_main p 
+		       full join cims_car_number v on 1 = 1 and v.id = $vids$
+		       full join (
+			       	select c.id cityId,c.region cityName ,c.engname cityNameEn
+					       from pms_city c
+					       where c.id in($citys$)
+		       )d on 1 = 1
+		       where p.year||'-'||lpad(p.month_id,2,0) between '$beginDate$' and '$endDate$'
+	)
+	select  Case When d.Yearmonth Is Null Or Length(d.Yearmonth) = 6 Then T4.Yearmonth Else d.Yearmonth End Yearmonth,
+       		T4.VersionId,T4.CityId,T4.CityName,T4.CityNameEn,d.*
+			 from t4
+			 ,(
+			 	select  T2.Vid,Case When T1.Yearmonth Is Null Or Length(T1.Yearmonth) = 6 Then T2.Yearmonth Else T1.Yearmonth End Yearmonth
+		               ,T2.Msrp,T2.Rn,T2.Onvid,T2.Versionname,T2.Versioncode,T2.Modelyear,T2.Versionlaunchdate,T2.Typeid,T2.Typeiden,T2.Manfname
+		               ,T2.Manfnameen,T2.Submodelname,T2.Submodelnameen,T2.Discharge,T2.Gearmode,T2.Gearmodeen,T2.Bodytype,T2.Bodytypeen,T2.Gradename
+		               ,T2.Gradenameen
+		               ,t1.tp
+					   ,t2.msrp-t3.rebate_cash-t3.allowance-t3.ck_reward sellerCost
+					   ,t2.msrp-t3.rebate_cash-t3.allowance invoicePrice
+					   ,t3.rebate_cash rebatePrice
+					   ,t3.ck_reward rewardAssessment
+					   ,t3.allowance promotionalAllowance
+					   ,t1.tp-(t2.msrp-t3.rebate_cash-t3.allowance) modelProfit
+					   ,t1.oncityid
+					   from t2,t1,t3 
+					   where t2.vid = t1.vid(+) and t2.yearmonth = Substr(T1.Yearmonth(+), 0, 6)
+					     and t2.vid = t3.vid(+) and t2.yearmonth = t3.yearmonth(+)
+			 )d where t4.versionid = d.vid(+) and t4.yearmonth = Substr(d.Yearmonth(+), 0, 6) and t4.cityid = d.oncityid(+)
+		     order by t4.cityid,(Case When d.Yearmonth Is Null Or Length(d.Yearmonth) = 6 Then T4.Yearmonth Else d.Yearmonth End)
+</select>
+
+<!-- 加载对象(车型,生产商)城市利润图形和表格数据  -->
+<select id="loadObjectCityProfitChartAndTable" resultClass="com.ways.app.price.model.ObjectInfoEntity">
+With Version As(  
+	<!-- 获取对象下所对应型号信息 -->         
+	<include refid="getVersionInfoByObject"/>
+ ) 
+,Full_Time As(
+     <!-- 补数表 -->
+	 Select p.Ym,c.id regionId,c.region,c.engname regionEn,v.Vid,v.Objid
+	   From Pms_Date_Main p,Pms_City c,Version v
+	  Where p.Ym Between Replace('$beginDate$', '-', '') And Replace('$endDate$', '-', '')
+	  And   v.Is_Installed_Flag != 1
+	  And   c.Id In($citys$)
+ ) 
+,city_tp As(
+	<!-- 城市最低成交价查询 -->
+	Select * From (
+		Select 
+			/*+ RULE*/ v.Vid,v.Objid,To_Char(p.New_tp * 10000) Tp,p.Region,
+			<!-- 每月取最末批次日期(最末批次成交价可能跨月所以取批次所在月份字段) -->
+        	<!-- 最新月不存在最末批次所以还是取成交价日期 -->
+		  	Case When p.Week = 4 Or p.Week = 5 
+		  		 Then Replace(p.Batch_Yearmonth, '-', '')
+		  		 Else To_Char(p.Price_Time, 'YYYYMMDD') 
+		     End Yearmonth,
+		    <!-- 每月最低成交价获取时也是通过批次所在月份字段分组,通过周字段排序取最末周下最低成交价 --> 
+        	<!-- 最新月无需取批次所在月份字段取判断 --> 
+		  	Case When p.Week = 4 Or p.Week = 5 
+		  		 Then Row_Number() Over(Partition By v.Vid,p.Region,p.Batch_Yearmonth Order By v.Vid Desc,p.Week Desc,p.New_tp Asc)
+		     	 Else Row_Number() Over(Partition By v.Vid,p.Region,To_Char(p.Price_Time, 'YYYYMMDD') Order By v.Vid Desc,p.New_tp Asc)
+		     	  End Rn
+		  From Pms_Price_Promotion_Auto_View p
+		  Inner Join Version v On p.Car_Model = v.Vid
+		  Where v.Is_Installed_Flag != 1
+		    And p.Region In($citys$)
+		    And p.New_tp Is Not Null And p.New_tp != 0.00
+		    <!-- 新增判断存在最新周时成交价需查询出周数据 -->
+		   	<include refid="tp_Condition"/>
+	) Where Rn = 1   	
+ )
+,Msrp As(
+	<!-- 获取所选对象下型号每月最新指导价 -->          
+	 Select *
+	   From (
+	   Select Distinct Replace(P.Msrp_Adjust_Date_Format,'-','') Yearmonth,
+	                   To_Char(p.New_Msrp * 10000) Msrp,
+	                   Row_Number() Over(Partition By v.Vid, Msrp_Adjust_Date_Format Order By v.Vid Desc, p.Msrp_Adjust_Date Desc) Rn,
+	                   v.*
+	     From Cims_Direction_Price_Auto_View p
+	    Inner Join Version v On v.Vid = p.Car_Name
+	    Where Msrp_Adjust_Date_Format Between '$beginDate$' And '$endDate$'
+	      And p.Direction_Price Is Not Null
+	      And v.Is_Installed_Flag != 1
+	  ) Msrp
+	  Where Rn = 1 
+),
+<!-- 获取型号城市返利信息 -->
+Rebate As
+	 (Select Tp.region,
+	         Rebate.Vid,
+	         Decode(Tp.yearmonth,Null,rebate.yearmonth,Tp.yearmonth) Yearmonth,
+	         Msrp.Msrp - Rebate.Rebate_Cash - Rebate.Allowance -Rebate.Ck_Reward Sellercost,
+	         Msrp.Msrp - Rebate.Rebate_Cash - Rebate.Allowance Invoiceprice,
+	         Rebate.Rebate_Cash Rebateprice,
+	         Rebate.Ck_Reward Rewardassessment,
+	         Rebate.Allowance Promotionalallowance,
+	         Tp.Tp - (Msrp.Msrp - Rebate.Rebate_Cash - Rebate.Allowance) Modelprofit
+	    From City_Tp Tp,Msrp Msrp,
+	         (Select *
+	            From (Select b.Vid,
+	                         b.Objid,
+	                         p.Year || Lpad(p.Month, 2, 0) Yearmonth,
+	                         p.Rebate_Count Rebate_Cash,
+	                         p.Rebate_Pst Allowance,
+	                         p.Reward_Count Ck_Reward,
+	                         Row_Number() Over(Partition By b.Vid, p.Year, p.Month Order By b.Vid Desc) Rebatern
+	                    From Tb_Autoprice_Month_Rebate p
+	                   Inner Join Version b On b.Vid = p.Version_Id And b.Is_Installed_Flag != 1
+	                   Where p.Year || '-' || Lpad(p.Month, 2, 0) Between '$beginDate$' And '$endDate$'
+	                   )
+	           Where Rebatern = 1
+	         ) Rebate
+	   Where Tp.Vid = Msrp.Vid(+)
+	     And Substr(Tp.Yearmonth, 0, 6) = Msrp.Yearmonth(+)
+	     And Msrp.Vid = Rebate.Vid(+)
+	     And Msrp.Yearmonth = Rebate.Yearmonth(+)
+)
+ ,weight_sales As( 
+ 		<!-- 获取型号在对象中销量占比 -->  
+		Select e.Version_Sale,e.Objid,e.Vid,e.Yearmonth,
+		       Ratio_To_Report(Sum(e.Version_Sale)) Over(Partition By e.Objid, e.yearmonth) As Salemix
+		  From (
+		         Select /*+RULE*/ Sum(s.Sales) As Version_Sale,
+		         <!-- 加装版型号销量累加至原装型号中 -->
+		         Decode(v.Is_Installed_Flag, 1, v.o_Car_Number_Id, v.Vid) As Vid,
+		         v.Objid,s.Yearmonth
+		          From V2_Version_Sales s, Version v
+		         Where s.Version_id = v.Vid		           
+		         Group By Decode(v.Is_Installed_Flag, 1, v.o_Car_Number_Id, v.Vid),v.Objid,s.Yearmonth
+		        ) e
+		 Group By e.Version_Sale, e.Objid, e.Vid, e.yearmonth
+ )
+ ,all_weight_sales As( 
+		 <!-- 型号销量数据补全 -->    
+		 Select s.Version_Sale,s.Vid,s.Objid,s.yearmonth,
+		        Case When s.Salemix Is Null And s.yearmonth > m.maxDate Then 
+		             (<!--如果价格月份无销量占比且价格时间大于销量数据最大时间,则当前价格月份对应销量数据为销量数据最大时间所对应销量占比  -->
+		               Select t.Salemix From Weight_Sales t Where t.Vid = s.Vid And t.Yearmonth = m.maxDate
+		             )
+		             Else s.Salemix 
+		             End Salemix
+		  From (<!-- 补全无销量的月份型号数据 -->
+			  	Select t.*, s.Version_Sale, s.Salemix
+			           From (Select ft.Ym yearmonth, ft.Vid, ft.Objid From Full_Time ft Group By ft.Ym, ft.Vid, ft.Objid) t, Weight_Sales s
+			           Where t.Yearmonth = s.Yearmonth(+) And t.Vid = s.Vid(+) And t.Objid = s.Objid(+)
+			   ) s,(Select Max(s.Yearmonth) maxdate From V2_Version_Sales s) m
+)  
+ ,weight_tp As(
+<!-- 型号权重成交价(型号成交价*型号销量权重) --> 
+	Select Tp.Ym As Yearmonth,Tp.Region,
+		   <!-- 当前车型有销量数据时车型TP为SUM(型号成交价*型号销量权重) ,无车型销量则取SUM(型号成交价)-->
+		   Case When Max(tp.Salemix) Is Not Null Then Decode(Sum(Weight_Tp), 0, Avg(Tp), Sum(Weight_Tp)) Else Avg(tp) End Weight_Tp
+		   From (
+		   		 Select s.Vid,s.Objid,Decode(Ct.Yearmonth, Null, s.Yearmonth, Ct.Yearmonth) Ym,Ct.Tp,Ct.Region,s.Version_Sale,s.Salemix,
+		   		 		<!-- 存在城市成交价与加权销量对应不上的问题,加权销量总和不等于百分百,将加权销量归一使总和为百分百 -->
+		   		 		Case When Ct.Tp Is Not Null And Sum(s.Salemix)Over(Partition By s.Objid, Ct.Yearmonth, Ct.Region) > 0
+		   		 			 Then Nvl(Ct.Tp, 0) * Nvl(s.Salemix  / Sum(s.Salemix)Over(Partition By s.Objid, Ct.Yearmonth, Ct.Region), 0)
+		   		 			 Else 0
+		   		 		 End Weight_Tp
+		           From city_tp Ct, All_Weight_Sales s
+		          Where Ct.Vid(+) = s.Vid And Ct.Objid(+) = s.Objid
+		            And Substr(Ct.Yearmonth(+), 0, 6) = s.Yearmonth 
+		          ) Tp
+		          <!-- 当存在最新周价格时,过滤最新月批次数据 -->
+				  <!-- 当车型或厂商下存在价格型号个数对应不上销量型号个数时通过型号价格过滤 -->
+				  <isEqual property="latestWeek" compareValue="true">
+				     Where tp.ym != Replace('$endDate$','-','')
+				  </isEqual> 
+		  Group By Tp.Region, Tp.Ym
+ ) 
+ ,weight_Msrp As(
+ 		 <!-- 加权指导价信息获取(最新指导价*加权销量) -->
+		 Select Objid,Yearmonth,
+		        Case When Max(Salemix) Is Not Null 
+	    			Then Decode(Sum(Weight_Msrp), 0, Avg(Msrp), Sum(Weight_Msrp))
+	    			Else Avg(Msrp) 
+	    			End Weight_Msrp 
+		   From (Select Sales.Vid,
+		                Sales.Objid,
+		                Sales.Yearmonth,
+		                Sales.Salemix,
+		                Msrp.Msrp,
+		                Nvl(Msrp.Msrp, 0) * nvl(Sales.salemix / Sum(Sales.Salemix)Over(Partition By Sales.Objid, Msrp.Yearmonth),0) Weight_Msrp
+		           From Msrp Msrp, All_Weight_Sales Sales
+		          Where Msrp.Vid(+) = Sales.Vid
+		            And Msrp.Yearmonth(+) = Sales.Yearmonth
+		         )
+		  Group By Objid, Yearmonth
+ )  
+ ,weight_Rebate As(
+ 		 <!-- 获取车型城市返利信息 -->
+		 Select Objid,region,Yearmonth,
+	         Case When Max(Salemix) Is Not Null 
+	              Then Decode(Sum(Weight_Sellercost),0,Avg(Sellercost),Sum(Weight_Sellercost))
+	              Else Avg(Sellercost)
+	              End Weight_Sellercost,
+	         Case When Max(Salemix) Is Not Null 
+	              Then Decode(Sum(Weight_Invoiceprice),0,Avg(Invoiceprice),Sum(Weight_Invoiceprice))
+	              Else Avg(Invoiceprice)
+	              End Weight_Invoiceprice,
+	         Case When Max(Salemix) Is Not Null 
+	              Then Decode(Sum(Weight_Rebateprice),0,Avg(Rebateprice),Sum(Weight_Rebateprice))
+	              Else Avg(Rebateprice)
+	              End Weight_Rebateprice,
+	         Case When Max(Salemix) Is Not Null 
+	              Then Decode(Sum(Weight_Rewardassessment),0,Avg(Rewardassessment),Sum(Weight_Rewardassessment))
+	              Else Avg(Rewardassessment)
+	              End Weight_Rewardassessment,
+	         Case When Max(Salemix)Is Not Null 
+	              Then Decode(Sum(Weight_Promotionalallowance),0,Avg(Promotionalallowance),Sum(Weight_Promotionalallowance))
+	              Else Avg(Promotionalallowance)
+	              End Weight_Promotionalallowance,
+	         Case When Max(Salemix) Is Not Null 
+	              Then Decode(Sum(Weight_Modelprofit),0,Avg(Modelprofit),Sum(Weight_Modelprofit))
+	              Else Avg(Modelprofit)
+	              End Weight_Modelprofit
+	      	 From (
+					Select Rebate.region,
+					       Sales.Vid,
+					       Sales.Objid,
+					       Decode(rebate.yearmonth,Null,Sales.Yearmonth,rebate.yearmonth) Yearmonth,
+					       Sales.Salemix,
+					       Rebate.Sellercost,
+					       Rebate.Invoiceprice,
+					       Rebate.Rebateprice,
+					       Rebate.Rewardassessment,
+					       Rebate.Promotionalallowance,
+					       Rebate.Modelprofit,
+					       Nvl(Rebate.Sellercost, 0) * Nvl(Sales.Salemix / Sum(Sales.Salemix)Over(Partition By Sales.Objid, Rebate.Yearmonth,Rebate.Region),0) Weight_Sellercost,
+					       Nvl(Rebate.Invoiceprice, 0) * Nvl(Sales.Salemix / Sum(Sales.Salemix)Over(Partition By Sales.Objid, Rebate.Yearmonth,Rebate.Region),0) Weight_Invoiceprice,
+					       Nvl(Rebate.Rebateprice, 0) * Nvl(Sales.Salemix / Sum(Sales.Salemix)Over(Partition By Sales.Objid, Rebate.Yearmonth,Rebate.Region),0) Weight_Rebateprice,
+					       Nvl(Rebate.Rewardassessment,0) * Nvl(Sales.Salemix/Sum(Sales.Salemix)Over(Partition By Sales.Objid, Rebate.Yearmonth,Rebate.Region),0)Weight_Rewardassessment,
+					       Nvl(Rebate.Promotionalallowance, 0) * Nvl(Sales.Salemix / Sum(Sales.Salemix)Over(Partition By Sales.Objid,Rebate.Yearmonth,Rebate.Region),0)Weight_Promotionalallowance,
+					       Nvl(Rebate.Modelprofit, 0) * Nvl(Sales.Salemix / Sum(Sales.Salemix)Over(Partition By Sales.Objid, Rebate.Yearmonth,Rebate.Region),0) Weight_Modelprofit
+					  From Rebate Rebate, All_Weight_Sales Sales
+					  Where Rebate.Vid(+) = Sales.Vid
+					    And SubStr(Rebate.Yearmonth(+),0,6) = Sales.Yearmonth
+					    And rebate.Modelprofit Is Not Null
+	        )
+		Group By Objid,Region,Yearmonth
+ ) 
+	Select  
+			v.Manfid,v.Manfname,v.Manfnameen,v.Gradeid,v.Gradename,v.Gradenameen,
+		    v.Submodelid,v.Submodelnameen,v.Submodelname,v.Isbase,rs.* 
+	   FROM (
+	          Select
+			        T.RegionId CityId,
+			        T.Region CityName,
+			        T.RegionEn CityNameEn,
+			        msrp.objid,
+			        Case When Tp.Yearmonth Is Null Or Length(Tp.Yearmonth) = 6 Then T.ym Else Tp.Yearmonth End Yearmonth,     
+			        Msrp.Weight_Msrp msrp,              
+			        Tp.Weight_Tp tp,
+			        Rebate.Weight_Sellercost Sellercost,
+	                Rebate.Weight_Invoiceprice Invoiceprice,
+	                Rebate.Weight_Rebateprice Rebateprice,
+	                Rebate.Weight_Rewardassessment Rewardassessment,
+	                Rebate.Weight_Promotionalallowance Promotionalallowance,
+	                Rebate.Weight_Modelprofit Modelprofit,
+			        T.RegionId Oncityid 
+	     FROM (
+	     		Select Ft.Ym, Ft.Objid, Ft.Regionid,Ft.Region,Ft.RegionEn 
+	     			   From Full_Time Ft 
+	     			Group By Ft.Ym, Ft.Objid, Ft.Regionid,Ft.Region,Ft.RegionEn
+	     ) t,
+	     weight_tp tp,weight_Msrp msrp,weight_Rebate rebate
+	   Where t.ym = SubStr(tp.yearmonth(+),0,6) 
+	     And t.RegionId = Tp.region(+)  
+	     And t.Ym = Msrp.yearmonth(+) 
+	     And tp.yearmonth = Rebate.yearmonth(+)
+	     And tp.region = Rebate.Region(+)
+	)rs,
+ (<include refid="getVersionColumn"/>) v
+ Where rs.objid = v.objid
+ <!-- 最新周存在时剔除最新周无成交价对应数据 -->
+ <isEqual property="latestWeek" compareValue="true">
+     And rs.yearmonth != Replace('$endDate$','-','')
+ </isEqual>
+	Order By rs.CityId,rs.yearmonth
+</select>
+
+<!-- 下载(车型,生产商)城市利润数据  -->
+<select id="exportCityProfitData" resultClass="com.ways.app.price.model.VersionInfoEntity">
+With Version As(  
+	<!-- 获取对象下所对应型号信息 -->         
+	<include refid="getVersionInfoByObject"/>
+ ) 
+,Full_Time As(
+     <!-- 补数表 -->
+	 Select p.Ym,c.id regionId,c.region,c.engname regionEn,v.Vid,v.Objid
+	   From Pms_Date_Main p,Pms_City c,Version v
+	  Where p.Ym Between Replace('$beginDate$', '-', '') And Replace('$endDate$', '-', '')
+	  And   v.Is_Installed_Flag != 1
+	  And   c.Id In($citys$)
+ ) 
+,city_tp As(
+	<!-- 城市最低成交价查询 -->
+Select * From (
+	Select 
+		/*+ RULE*/ v.Vid,v.Objid,To_Char(p.New_tp * 10000) Tp,p.Region,
+		<!-- 每月取最末批次日期(最末批次成交价可能跨月所以取批次所在月份字段) -->
+        <!-- 最新月不存在最末批次所以还是取成交价日期 -->
+	  	Case When p.Week = 4 Or p.Week = 5 
+	  		 Then Replace(p.Batch_Yearmonth, '-', '')
+	  		 Else To_Char(p.Price_Time, 'YYYYMMDD')
+	  	 End Yearmonth,
+	  	<!-- 每月最低成交价获取时也是通过批次所在月份字段分组,通过周字段排序取最末周下最低成交价 --> 
+	    <!-- 最新月无需取批次所在月份字段取判断 --> 
+	  	Case When p.Week = 4 Or p.Week = 5
+			 Then Row_Number() Over(Partition By v.Vid,p.Region,p.Batch_Yearmonth Order By v.Vid Desc,p.Week Desc,p.New_tp Asc)
+	     	 Else Row_Number() Over(Partition By v.Vid,p.Region,To_Char(p.Price_Time, 'YYYYMMDD') Order By v.Vid Desc,p.New_tp Asc)
+	     End Rn
+	  From Pms_Price_Promotion_Auto_View p
+	  Inner Join Version v On p.Car_Model = v.Vid
+	  Where v.Is_Installed_Flag != 1
+	    And p.Region In($citys$)
+	    And p.New_tp Is Not Null And p.New_tp != 0.00
+	    <!-- 新增判断存在最新周时成交价需查询出周数据 -->
+	   	<include refid="tp_Condition"/>
+	) Where Rn = 1   	
+ )
+,Msrp As(
+	<!-- 获取所选对象下型号每月最新指导价 -->          
+	 Select *
+	   From (
+	   Select Distinct Replace(P.Msrp_Adjust_Date_Format,'-','') Yearmonth,
+	                   To_Char(p.New_Msrp * 10000) Msrp,
+	                   Row_Number() Over(Partition By v.Vid, Msrp_Adjust_Date_Format Order By v.Vid Desc, p.Msrp_Adjust_Date Desc) Rn,
+	                   v.*
+	     From Cims_Direction_Price_Auto_View p
+	    Inner Join Version v On v.Vid = p.Car_Name
+	    Where Msrp_Adjust_Date_Format Between '$beginDate$' And '$endDate$'
+	      And p.Direction_Price Is Not Null
+	      And v.Is_Installed_Flag != 1
+	  ) Msrp
+	  Where Rn = 1
+),
+<!-- 获取型号城市返利信息 -->
+Rebate As(
+	Select * From (Select b.Vid,
+	                      b.Objid,
+	                      p.Year || Lpad(p.Month, 2, 0) Yearmonth,
+	                      p.Rebate_Count Rebate_Cash,
+	                      p.Rebate_Pst Allowance,
+	                      p.Reward_Count Ck_Reward,
+	                      Row_Number() Over(Partition By b.Vid, p.Year, p.Month Order By b.Vid Desc) Rebatern
+	                 From Tb_Autoprice_Month_Rebate p
+	                Inner Join Version b On b.Vid = p.Version_Id And b.Is_Installed_Flag != 1
+	                Where p.Year || '-' || Lpad(p.Month, 2, 0) Between '$beginDate$' And '$endDate$')
+	Where Rebatern = 1
+)
+ ,weight_sales As( 
+ 		<!-- 获取型号在对象中销量占比 -->  
+		Select e.Version_Sale,e.Objid,e.Vid,e.Yearmonth,
+		       Ratio_To_Report(Sum(e.Version_Sale)) Over(Partition By e.Objid, e.yearmonth) As Salemix
+		  From (
+		         Select /*+RULE*/ Sum(s.Sales) As Version_Sale,
+		         <!-- 加装版型号销量累加至原装型号中 -->
+		         Decode(v.Is_Installed_Flag, 1, v.o_Car_Number_Id, v.Vid) As Vid,
+		         v.Objid,s.Yearmonth
+		          From V2_Version_Sales s, Version v
+		         Where s.Version_id = v.Vid		           
+		         Group By Decode(v.Is_Installed_Flag, 1, v.o_Car_Number_Id, v.Vid),v.Objid,s.Yearmonth
+		        ) e
+		 Group By e.Version_Sale, e.Objid, e.Vid, e.yearmonth
+ )
+ ,all_weight_sales As( 
+		 <!-- 型号销量数据补全 -->    
+		 Select s.Vid,s.Objid,s.yearmonth,
+		 		Case When s.Version_Sale Is Null And s.yearmonth > m.maxDate Then 
+		             (<!--如果价格月份无销量且价格时间大于销量数据最大时间,则当前价格月份对应销量数据为销量数据最大时间所对应销量  -->
+		               Select t.Version_Sale From Weight_Sales t Where t.Vid = s.Vid And t.Yearmonth = m.maxDate
+		             )
+		             Else s.Version_Sale 
+		             End Version_Sale,
+		        Case When s.Salemix Is Null And s.yearmonth > m.maxDate Then 
+		             (<!--如果价格月份无销量占比且价格时间大于销量数据最大时间,则当前价格月份对应销量数据为销量数据最大时间所对应销量占比  -->
+		               Select t.Salemix From Weight_Sales t Where t.Vid = s.Vid And t.Yearmonth = m.maxDate
+		             )
+		             Else s.Salemix 
+		             End Salemix
+		  From (<!-- 补全无销量的月份型号数据 -->
+			  	Select t.*, s.Version_Sale, s.Salemix
+			           From (Select ft.Ym yearmonth, ft.Vid, ft.Objid From Full_Time ft Group By ft.Ym, ft.Vid, ft.Objid) t, Weight_Sales s
+			           Where t.Yearmonth = s.Yearmonth(+) And t.Vid = s.Vid(+) And t.Objid = s.Objid(+)
+			   ) s,(Select Max(s.Yearmonth) maxdate From V2_Version_Sales s) m
+)  
+Select Ct.Yearmonth,c.Id Cityid,c.Region Cityname,c.Engname Citynameen,v.Vid Versionid,
+       v.Versionchartname,v.Isbase,Msrp.Msrp,Ct.Tp,v.Versionname,v.Versioncode,v.Modelyear,
+       v.Versionlaunchdate,v.Typeid,v.Typeiden,v.Manfname,v.Manfnameen,v.Submodelname,
+       v.Submodelnameen,v.Discharge,v.Gearmode,v.Gearmodeen,v.Bodytype,v.Bodytypeen,
+       v.Gradename,v.Gradenameen,
+       Msrp.Msrp - Rebate.Rebate_Cash - Rebate.Allowance - Rebate.Ck_Reward Sellercost,
+       Msrp.Msrp - Rebate.Rebate_Cash - Rebate.Allowance Invoiceprice,
+       Rebate.Rebate_Cash Rebateprice,
+       Rebate.Ck_Reward Rewardassessment,
+       Rebate.Allowance Promotionalallowance,
+       Ct.Tp - (Msrp.Msrp - Rebate.Rebate_Cash - Rebate.Allowance) Modelprofit,
+       s.Version_Sale Versionsale
+  From All_Weight_Sales s,
+       City_Tp          Ct,
+       Pms_City         c,
+       Msrp             Msrp,
+       Rebate           Rebate,
+       Version          v
+ Where Ct.Vid(+) = s.Vid
+   And Ct.Objid(+) = s.Objid
+   And Substr(Ct.Yearmonth(+), 0, 6) = s.Yearmonth
+   And Msrp.Vid(+) = s.Vid
+   And Msrp.Objid(+) = s.Objid
+   And Msrp.Yearmonth(+) = s.Yearmonth
+   And Rebate.Vid(+) = s.Vid
+   And Rebate.Objid(+) = s.Objid
+   And Rebate.Yearmonth(+) = s.Yearmonth
+   And s.Vid = v.Vid(+)
+   And Ct.Region = c.Id(+)
+   And Ct.Tp > 0
+ Order By Ct.Region, Ct.Yearmonth
+</select>
+
+<!-- 校验弹出框有效数据  -->
+<resultMap class="com.ways.app.price.model.SubModel" id="checkPopBoxDataGroup1" groupBy="subModelId">
+	<result property="subModelId" column="mid" nullValue="" />
+	<result property="versionList" resultMap="profit.checkPopBoxDataGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.Version" id="checkPopBoxDataGroup2">
+	<result property="versionId" column="vid" nullValue="" />
+</resultMap>
+<select id="checkPopBoxData" resultMap="checkPopBoxDataGroup1">
+	with t1 as(
+		<isNotEmpty property="vids">
+			select v.fzdy2 mid,v.id vid from cims_car_number v where v.id in($vids$)
+		</isNotEmpty>
+		<isNotEmpty property="mids">
+			select v.fzdy2 mid,v.id vid  from cims_car_number v where v.fzdy2 in($mids$)	
+		</isNotEmpty>
+	)
+	select t1.vid,t1.mid 
+		   from t1
+		   where not exists(
+				<isEqual compareValue="1" property="analysisContentType">
+					<!-- 返点返利校验 -->
+					select /*+ RULE*/1 
+						   from tb_autoprice_month_rebate p 
+						   inner join cims_car_number v on v.id = p.version_id
+						   inner join Pms_Price_Promotion pm on pm.Car_Model = p.version_id
+						   where p.year||'-'||lpad(p.month, 2, 0) between '$beginDate$' and '$endDate$'
+						   		 and To_Char(pm.Price_Time, 'YYYYMM') between replace('$beginDate$','-','') and replace('$endDate$','-','') 
+							    <isNotEmpty property="vids">
+									and p.version_id = t1.vid
+								</isNotEmpty>
+								<isNotEmpty property="mids">
+									and v.fzdy2 = t1.mid
+								</isNotEmpty>
+								 
+				</isEqual>		  
+				<isNotEqual compareValue="1" property="analysisContentType">
+					<!-- 成交价校验 -->
+					select /*+ RULE*/1 
+						   from  Pms_Price_Promotion p 
+						   inner join cims_car_number v on v.id =  p.Car_Model
+						   where To_Char(p.Price_Time, 'YYYYMM') between replace('$beginDate$','-','') and replace('$endDate$','-','') 
+								<isNotEmpty property="vids">
+									and p.model_id = t1.vid
+								</isNotEmpty>
+								<isNotEmpty property="mids">
+									and v.fzdy2 = t1.mid
+								</isNotEmpty>
+				</isNotEqual> 
+		   )
+</select>
+
+<!-- 校验生产商弹出框有效数据  -->
+<select id="checkManfPopBoxData" resultClass="com.ways.app.price.model.Manf">
+	with t1 as(
+		Select s.Id Manfid, s.Scs As Manfname From view_Cims_Scs s Where s.id In ($manfs$)
+	)
+	select t1.manfId,t1.manfName 
+		   from t1
+		   where not exists(
+				<isEqual compareValue="1" property="analysisContentType">
+					<!-- 返点返利校验 -->
+					select 1 
+						   From Tb_Autoprice_Month_Manfrebate p,
+						        Cims_Car_Number               v,
+						        Pms_Price_Promotion           Pm
+						   where p.year||'-'||lpad(p.month, 2, 0) between '$beginDate$' and '$endDate$'
+						   		 And To_Char(pm.Price_Time, 'YYYYMM') between replace('$beginDate$','-','') and replace('$endDate$','-','') 
+								 And Pm.Car_Model = v.Id
+								 And p.Manf_Brand_Id = v.Scs || '|' || v.Pbrandid
+								 And p.Manf_Brand_Id = T1.Manfid
+				</isEqual>		  
+				<isNotEqual compareValue="1" property="analysisContentType">
+					<!-- 成交价校验 -->
+					select 1 from
+							<!-- Sub_transprice成交价中间表通过车型,型号,成交价日期分组 -->
+							Sub_transprice p,cims_car_number v						   
+						    where To_Char(p.Price_Time, 'YYYYMM') between replace('$beginDate$','-','') and replace('$endDate$','-','') 
+							  And v.id = p.Car_Model
+							  And v.scs||'~'||v.pbrandid = t1.manfId
+				</isNotEqual> 
+		   )
+</select>
+
+<select id="findLatestWeek" resultClass="java.lang.String">
+	With t1 As(
+     Select Distinct to_char(p.Price_Time,'YYYY-MM') priceTime, p.Monthbatch
+            From Pms_Price_Promotion p
+            Where To_Char(p.Price_Time, 'YYYYMM') = replace('$endDate$','-','')
+	)
+	Select Distinct t.Pricetime FROM t1 t Where Not Exists (Select 1 FROM t1 Where t1.Monthbatch = 2)
+</select>
+
+</sqlMap>

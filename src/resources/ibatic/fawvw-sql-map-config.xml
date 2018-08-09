@@ -1,0 +1,77 @@
+<!DOCTYPE sqlMapConfig PUBLIC "-//iBATIS.com//DTD SQL Map Config 2.0//EN"  
+  "http://ibatis.apache.org/dtd/sql-map-config-2.dtd"> 
+<sqlMapConfig>
+	<settings
+		cacheModelsEnabled="true"
+		enhancementEnabled="true"
+		lazyLoadingEnabled="true"
+		maxRequests="320"
+		maxSessions="100"
+		maxTransactions="50"
+		useStatementNamespaces="true"
+	/>
+	
+	<!-- ************************************终端支持研究 开始*********************************-->
+		<!-- 促销查询 -->
+		<sqlMap resource="ibatic/fawvw/policy/PolicyMonthAnaly.xml"/>
+		<!-- 促销查询(查车型) -->
+		<sqlMap resource="ibatic/fawvw/global/PolicyMonthAnalyGlobal.xml"/>
+		<!-- 促销走势分析 -->
+		<sqlMap resource="ibatic/fawvw/policy/Promotion.xml"/>	
+		<!-- 促销走势分析 弹出框-->
+		<sqlMap resource="ibatic/fawvw/global/PromotionGlobal.xml"/>
+		<!-- 销量促销分析 -->
+		<sqlMap resource="ibatic/fawvw/policy/SalePromotionAnalysis.xml"/>
+		<!-- 终端支持分析 弹出框-->
+		<sqlMap resource="ibatic/fawvw/global/TerminalGlobal.xml"/>
+		<!-- 终端支持分析 结果框-->
+		<sqlMap resource="ibatic/fawvw/policy/TerminalAnalysis.xml"/>
+	    <!--促销分类分析  -->
+	    <sqlMap resource="ibatic/fawvw/policy/PromotionGroup.xml"/>
+		<!-- 销售激励查询 -->
+	    <sqlMap resource="ibatic/fawvw/policy/SaleIncentiveQuery.xml"/>
+	    <!-- 厂商销售支持 -->
+	    <sqlMap resource="ibatic/fawvw/policy/ManfSales.xml"/>
+	    <!-- 厂商销售支持弹出框 -->
+	    <sqlMap resource="ibatic/fawvw/global/ManfSalesGlobal.xml"/>
+	    <!-- 车型利润分析 -->
+	    <sqlMap resource="ibatic/fawvw/policy/SubmodelProfit.xml"/>
+	    <!-- 车型利润分析弹出框 -->
+	    <sqlMap resource="ibatic/fawvw/global/SubmodelProfitGlobal.xml"/>
+	<!-- ************************************终端支持研究 结束*********************************-->
+	    
+	
+	<!-- ************************************价格监测 开始*********************************-->
+		<!-- 利润对比分析 -->
+		<sqlMap resource="ibatic/fawvw/global/global.xml"/>
+		
+		<sqlMap resource="ibatic/fawvw/price/Profit.xml"/>
+		
+		<!-- 成本价查询 -->
+		<sqlMap resource="ibatic/fawvw/price/CityTpSelect.xml"/>
+		<!-- 指导价查询 -->
+		<sqlMap resource="ibatic/fawvw/price/MsrpQuery.xml"/>
+		<!-- 车型价格段分析 -->
+		<sqlMap resource="ibatic/fawvw/price/SubModelPriceAnalysis.xml"/>
+		<!-- 区域价格降幅 -->
+		<sqlMap resource="ibatic/fawvw/price/CityPriceIndex.xml"/>
+		<!-- 区域价格降幅彈出框 -->
+		<sqlMap resource="ibatic/fawvw/global/cityPriceIndexGlobal.xml"/>
+	<!-- ************************************价格监测 结束*********************************-->
+		
+	<!-- ************************************销量查询 开始*********************************-->
+	<!-- 销售比例查询 -->
+		<sqlMap resource="ibatic/fawvw/salesQuery/ModelSalesAmountFaw.xml"/>
+		<!-- 销量查询 -->
+		<sqlMap resource="ibatic/fawvw/salesQuery/SalesAmountFaw.xml"/>
+		 <sqlMap resource="ibatic/fawvw/global/SalesAmountFawGlobal.xml"/>
+	<!-- ************************************销量查询 结束*********************************-->
+	
+	<!-- ************************************价量分析 开始*********************************-->
+	    <!-- 车型销售比例分析  -->
+	    <sqlMap resource="ibatic/fawvw/pricesale/ScaleBySubModelSale.xml"/>
+	    <!-- 竞品价量分析 -->
+	    <sqlMap resource="ibatic/fawvw/pricesale/CompetingProduct.xml"/>
+	     <sqlMap resource="ibatic/fawvw/global/competingProductGlobal.xml"/>
+	<!-- ************************************价量分析 结束*********************************-->
+</sqlMapConfig> 

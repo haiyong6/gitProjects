@@ -1,0 +1,324 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTD SQL Map 2.0//EN" "http://ibatis.apache.org/dtd/sql-map-2.dtd" >
+<sqlMap namespace="CityProfitDistribution">
+
+<!-- 初始化时间，从用户购买数据表取 -->
+<select id="initDate" resultClass="java.util.HashMap">
+	with t1 as(
+		<isEqual property="analysisContentType" compareValue="1">
+			<!-- 返利返点表有效数据范围 -->
+			select distinct 
+		           first_value(p.year||lpad(p.month,2,0)) over(order by p.year asc,p.month asc) begindate,
+		           first_value(p.year||lpad(p.month,2,0)) over(order by p.year desc,p.month desc) enddate
+		           from tb_autoprice_month_rebate p
+		</isEqual>
+		<isNotEqual property="analysisContentType" compareValue="1">
+			<!--成交价表有效数据范围 -->
+			select distinct
+			       first_value(p.sdate) over(order by p.sdate asc) begindate,
+			       first_value(p.sdate) over(order by p.sdate desc) enddate
+			       from pms_promotion_price p where p.sdate != 197001
+		</isNotEqual>
+	)
+	 select 
+	 	   <![CDATA[
+	       case when g.sdate < t1.begindate then to_char(to_date(t1.begindate,'YYYY-MM'),'YYYY-MM') else to_char(to_date(substr(g.sdate,0,6),'YYYY-MM'),'YYYY-MM') end begindate
+	       ,case when g.edate > t1.enddate then to_char(to_date(t1.enddate,'YYYY-MM'),'YYYY-MM') else to_char(to_date(substr(g.edate,0,6),'YYYY-MM'),'YYYY-MM') end enddate
+	       ]]>
+	       from wias_user_purchase_date g 
+	       full join t1 on 1=1
+	       where g.group_id=$userId$ 
+	       <isEqual property="analysisContentType" compareValue="1">
+				 and g.model='brandprofitanaly'
+		   </isEqual>
+		   <isNotEqual property="analysisContentType" compareValue="1">
+				 and g.model='transprice'
+		   </isNotEqual>
+</select>
+
+<!-- 根据型号ID获取子集关系 -->
+<sql id="getVersionSubsetRelationship">
+	with base as(
+		 select * from (
+                 select d.*,row_number() over(partition by d.groupid,d.listingdate order by d.vid desc) vrn 
+                        from (
+                           select 
+                                 v.id vid,v.parentid pid,to_char(v.fzdy6,'YYYYMM') listingdate,connect_by_root(v.id) groupid,v.fzdy2 submodelid,c.sm changname
+                                 from cims_car_number v 
+                                 inner join cims_car_change c on c.id = v.fzdy7
+                                 where v.is_installed_flag != 1
+                                 connect by prior v.id = v.parentid
+                                 start with v.id in($vids$)
+                           union
+                           select 
+                                 v.id vid,v.parentid pid,to_char(v.fzdy6,'YYYYMM') listingdate,connect_by_root(v.id) groupid,v.fzdy2 submodelid,c.sm changname
+                                 from cims_car_number v 
+                                 inner join cims_car_change c on c.id = v.fzdy7
+                                 where v.is_installed_flag != 1
+                                 connect by v.id = prior v.parentid
+                                 start with v.id in($vids$)
+                       ) d
+         ) d where d.vrn = 1
+	)
+</sql>
+
+<!-- 加载车型利润图形和表格数据 -->
+<select id="loadModelProfitChartAndTable" resultClass="com.ways.app.price.model.VersionInfoEntity">
+	<include refid="getVersionSubsetRelationship" />
+	,t1 as(
+		<!-- 计算型号每月按子车型MIX归一后算出的成交价 -->
+		select distinct e.vid,e.yearmonth,e.sub_model_id,sum(e.mix) over(partition by e.vid,e.yearmonth) tp 
+		       from (
+		            select 
+		                   d.vid,d.yearmonth,d.sub_model_id
+		                   ,min(d.tp) * ratio_to_report(sum(d.value)) over(partition by d.yearmonth,d.vid) mix
+		                   from (
+		                   		select 
+		                        	 b.groupid vid,
+		                             Replace(p.Batch_Yearmonth, '-', '') yearmonth,
+		                             to_char(p.new_tp * 10000) tp,
+		                             p.region,
+		                             m.value,
+		                             m.sub_model_id,
+		                             <!-- 成交价取城市中经销商最的市场最低参考价,如果存在上下代时优化取下一代 -->
+		                             row_number() over(partition by b.groupid,p.region,p.Batch_Yearmonth order by b.vid desc,p.Week Desc,p.New_tp Asc) rn 
+		                             from pms_price_promotion_auto_view p
+		                             inner join base b on b.vid = p.car_model
+		                             inner join Transaction_Price_City_Mix m on m.sub_model_id = b.Submodelid and m.city_id=p.region and m.year = '$beginDate_TPMix$'
+		                             where p.Batch_Yearmonth between '$beginDate$' and '$endDate$' 
+		                             and p.region in($citys$) and p.Week In(4,5) and p.New_tp is not null and p.New_tp != 0.00
+		                   )d where d.rn = 1
+		                   group by d.vid,d.yearmonth,d.sub_model_id,d.region
+		       )e
+	)
+	,t2 as(
+		<!-- 查询型号每月在全国的最新指导价 -->
+	 	select * from ( 
+		      select distinct b.groupid vid
+		                      ,to_char(p.msrp_adjust_date, 'YYYYMM') yearmonth
+		                      ,to_char(p.new_msrp * 10000) msrp
+		                      ,row_number() over(partition by b.groupid, to_char(p.msrp_adjust_date, 'YYYY-MM') order by b.vid desc, p.msrp_adjust_date desc) rn
+		                      ,v.car_config_bm versioncode
+		                      ,v.sm versionname
+		                      ,to_char(v.fzdy6,'YYYYMM') versionLaunchDate
+		        from cims_direction_price_auto_view p
+		       inner join base b on b.vid = p.car_name
+		       inner join cims_car_number v on v.id = b.vid
+		       where to_char(p.msrp_adjust_date, 'YYYY-MM') between '$beginDate$' and '$endDate$' and p.direction_price is not null
+		   ) where rn = 1
+	)
+	,t3 as(
+		<!-- 查询型号每月返利返点数据 -->
+		select * from(
+			select b.groupid vid,p.year||lpad(p.month,2,0) yearmonth
+				   ,p.rebate_count rebate_cash
+				   ,p.rebate_pst allowance
+				   ,p.reward_count ck_reward 
+				   ,row_number() over(partition by b.groupid,p.year,p.month order by b.vid desc) rebatern
+	       		   from tb_autoprice_month_rebate p 
+	       		   inner join base b on b.vid = p.version_id
+	       		   where p.year||'-'||lpad(p.month, 2, 0) between '$beginDate$' and '$endDate$'
+		) where rebatern = 1
+	)
+	,t4 as(
+		<!-- 时间维度补数主表 -->
+		select p.year||lpad(p.month_id,2,0) yearmonth,v.id versionid,v.car_config_bm versioncode,v.sm versionname,b.name_eng||' '||v.typeideng versionChartname
+			   ,to_char(v.fzdy6,'YYYY-MM-DD') versionLaunchDate
+		       from pms_date_main p 
+		       full join cims_car_number v on 1 = 1
+		       full join cims_car_brandchild b on b.id = v.fzdy2
+		       where p.year||'-'||lpad(p.month_id,2,0) between '$beginDate$' and '$endDate$'
+		       and v.id in($vids$)
+	)
+	
+	select t4.yearmonth,t4.versionid,t4.versionChartname,d.versionLaunchDate
+		   ,d.tp,d.msrp,d.sellerCost,d.invoicePrice,d.rebatePrice,d.rewardAssessment,d.promotionalAllowance,d.modelProfit
+		   ,decode(t4.yearmonth,b.listingdate,b.changname,'') changName
+		   ,d.versioncode
+		   ,d.versionname
+			 from t4
+			 ,(
+			 	select t2.vid versionid,t2.yearmonth,t1.tp,t2.msrp
+					   ,t2.msrp-t3.rebate_cash-t3.allowance-t3.ck_reward sellerCost
+					   ,t2.msrp-t3.rebate_cash-t3.allowance invoicePrice
+					   ,t3.rebate_cash rebatePrice
+					   ,t3.ck_reward rewardAssessment
+					   ,t3.allowance promotionalAllowance
+					   ,t1.tp-(t2.msrp-t3.rebate_cash-t3.allowance) modelProfit
+					   ,t2.versioncode
+					   ,t2.versionname
+					   ,t2.versionLaunchDate
+					   from t2,t1,t3 
+					   where t2.vid = t1.vid(+) and t2.yearmonth = t1.yearmonth(+)
+					         and t2.vid = t3.vid(+) and t2.yearmonth = t3.yearmonth(+)
+			 )d ,base b 
+			 where t4.versionid = d.versionid(+) and t4.yearmonth = d.yearmonth(+) 
+			 	   and t4.versionid = b.groupid(+) and t4.yearmonth = b.listingdate(+)
+		     order by t4.versionid,t4.yearmonth
+</select>
+
+
+<!-- 获取型号信息公共SQL，作用于导出 -->
+<sql id="getVersionInfo">
+	select 
+	       v.id,
+	       b.name||' '||v.fyear||' '||v.typeid As Sm,
+	       v.sm versionName,
+	       v.smeng versionNameEn,
+	       v.car_config_bm versionCode,
+	       v.fyear modelyear,
+	       to_char(v.fzdy6,'YYYY-MM-DD') versionLaunchDate,
+	       v.typeid,
+	       v.typeideng typeiden,
+	       s.scs manfname,
+	       s.scs_eng manfnameen,
+	       b.name submodelname,
+	       b.name_eng submodelnameen,
+	       pl.pl discharge,
+	       pd.sm gearmode,
+	       <!-- 如果是大众和奥迪品牌的型号，需要将DCT转换为DSG -->
+	       case when v.pbrandid in(5,19) and pd.smeng = 'DCT' then 'DSG'
+	       else pd.smeng end gearmodeen,
+	       cs.lx bodytype,
+	       cs.lxeng bodytypeen,
+	        wg.parent_grade_name||' '||wg.grade_name_en||'-'||wg.sub_grade_name Gradename,
+        wg.parent_grade_name||' '||wg.grade_name_en||'-'||wg.sub_grade_name Gradenameen
+	       from cims_car_number v 
+	       inner join cims_car_brandchild b on b.id = v.fzdy2
+	       inner join cims_scs s on s.id = v.scs       
+	       inner join cims_car_pl pl on pl.id = v.pl
+	       inner join cims_car_pdfs pd on pd.id = v.pdfs
+	       inner join pms_car_hatchback cs on cs.id = v.hatchback
+	       left join faw_info_grade g
+      on g.brand_id = b.parent_id
+    left join v_faw_grade wg
+      on wg.grade_id = g.grade_id
+     and wg.group_id  = $userId$
+	       where v.id = $vids$
+</sql>
+
+<!-- 加载城市利润图形和表格数据  -->
+<select id="loadCityProfitChartAndTable" resultClass="com.ways.app.price.model.VersionInfoEntity">
+	With Version As (
+	 <include refid="getVersionInfo"/>
+)
+, Msrp As (
+Select Dr.Car_Name,
+       Max(Dr.Msrp_Adjust_Date) Over(Partition By Dr.Car_Name),
+       Dr.new_msrp * 10000 As Manufacturerprice
+  From Cims_Direction_Price_Auto_View Dr
+ Inner Join Version v On v.Id = Dr.Car_Name
+                     And To_Char(Msrp_Adjust_Date, 'yyyy-mm') = '$beginDate$'
+ ) 
+   ,Rebate as(     
+     Select *
+       From (Select P.version_Id As Id,
+                    p.Year|| Lpad(p.Month, 2, 0) Yearmonth,
+                    p.Rebate_Count Rebate_Cash,
+                    p.Rebate_Pst Allowance,
+                    p.Reward_Count Ck_Reward
+               From tb_autoprice_month_rebate p
+               Inner Join Version v On V.id = P.version_Id
+              Where p.Year || '-' || Lpad(p.Month, 2, 0) = '$beginDate$')
+      ) 
+	 ,Tp as(
+		 Select * From (     
+			 Select Car_Model,
+			        Ci.Id As Cityid,
+			        Ci.Region As City,
+			        ci.engname as cityNameEn,
+			        a.New_tp * 10000 As Tp_Price,
+			        Row_Number() Over(Partition By Car_Model, a.Batch_Yearmonth, Ci.Id, Ci.Region, Ci.Engname Order By a.Car_Model Desc, a.Week Desc, a.New_Tp Asc) Rn
+			   From Pms_Price_Promotion_auto_view a
+			  Inner Join Version v On V.id = Car_Model 
+			  Inner Join Wias_User_Purchase_City b On a.Region = b.City
+			                                      And b.Group_Id = 2
+			  Inner Join Pms_City Ci On b.City = Ci.Id
+			  Where 1 = 1
+			    And a.Batch_Yearmonth = '$beginDate$' 
+			    And a.Week In (4, 5)
+			    And b.City In ($citys$)
+	      ) Where Rn = 1			           
+ ) 
+Select 
+      v.*,
+      V.sm As VersionChartName,
+      R.yearMonth,
+      m.Manufacturerprice As Msrp,
+      T.tp_Price As Tp,
+      T.cityid As CityId,
+      T.city As CityName,
+      t.cityNameEn,
+      R.rebate_Cash As RebatePrice,
+      R.allowance As PromotionalAllowance,
+      r.Ck_Reward As RewardAssessment,
+      m.Manufacturerprice - r.Rebate_Cash - r.Allowance As InvoicePrice,
+      m.Manufacturerprice - r.Rebate_Cash - r.Allowance - r.Ck_Reward as Sellercost,
+      t.Tp_Price - (m.Manufacturerprice - r.Rebate_Cash - r.Allowance) As ModelProfit,
+      A.area_Id as areaId,
+      A.area_Name as areaName                                                                    
+  From Version v
+ Inner Join Msrp m On m.Car_Name = v.Id
+ Inner Join Tp t On t.Car_Model = v.Id
+ Inner Join Rebate r On r.Id = v.Id
+ Inner Join pms_area_pcity p On P.city_Id = T.cityid
+ Inner Join Pms_Area a On A.area_Id = P.area_Id
+ Order By Decode(T.city,'北京',1,'石家庄',2,'太原',3,'天津',4,'济南',5,'武汉',6
+ ,'郑州',7,'青岛',8,'成都',9,'西安',10,'重庆',11,'昆明',12,'贵阳',13,'乌鲁木齐',14
+ ,'兰州',15,'长春',16,'沈阳',17,'哈尔滨',18,'呼和浩特',19,'大连',20,'上海',21,'杭州',22,
+ '南京',23,'合肥',24,'宁波',25,'广州',26,'长沙',27,'深圳',28,'南宁',29,'福州',30,'南昌',31)
+</select>
+ 
+<!-- 校验弹出框有效数据  -->
+
+<!-- 获取子车型下型号数据 -->
+<resultMap class="com.ways.app.price.model.SubModel" id="checkPopBoxDataGroup1" groupBy="subModelId">
+	<result property="subModelId" column="mid" nullValue="" />
+	<result property="versionList" resultMap="profit.checkPopBoxDataGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.Version" id="checkPopBoxDataGroup2">
+	<result property="versionId" column="vid" nullValue="" />
+</resultMap>
+<select id="checkPopBoxData" resultMap="checkPopBoxDataGroup1">
+	with t1 as(
+		<isNotEmpty property="vids">
+			select v.fzdy2 mid,v.id vid from cims_car_number v where v.id in($vids$)
+		</isNotEmpty>
+		<isNotEmpty property="mids">
+			select v.fzdy2 mid,v.id vid  from cims_car_number v where v.fzdy2 in($mids$)	
+		</isNotEmpty>
+	)
+	select t1.vid,t1.mid 
+		   from t1
+		   where not exists(
+				<isEqual compareValue="1" property="analysisContentType">
+					<!-- 返点返利校验 -->
+					select 1 
+						   from tb_autoprice_month_rebate p 
+						   inner join cims_car_number v on v.id = p.version_id
+						   where p.year||'-'||lpad(p.month, 2, 0) between '$beginDate$' and '$endDate$'
+							    <isNotEmpty property="vids">
+									and p.version_id = t1.vid
+								</isNotEmpty>
+								<isNotEmpty property="mids">
+									and v.fzdy2 = t1.mid
+								</isNotEmpty>
+								 
+				</isEqual>		  
+				<isNotEqual compareValue="1" property="analysisContentType">
+					<!-- 成交价校验 -->
+					select 1 
+						   from pms_promotion_price p 
+						   inner join cims_car_number v on v.id = p.version_id
+						   where p.sdate between replace('$beginDate$','-','') and replace('$endDate$','-','') 
+								<isNotEmpty property="vids">
+									and p.version_id = t1.vid
+								</isNotEmpty>
+								<isNotEmpty property="mids">
+									and v.fzdy2 = t1.mid
+								</isNotEmpty>
+				</isNotEqual> 
+		   )
+</select>
+
+</sqlMap>

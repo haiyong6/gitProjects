@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTD SQL Map 2.0//EN" "http://ibatis.apache.org/dtd/sql-map-2.dtd" >
+<sqlMap namespace="moduleStatistics">
+	
+<insert id="insertModuleStatistics" parameterClass="com.ways.framework.model.WiasBean">
+  
+ INSERT INTO WIAS_USERS_MODEL_LOGS (ID, USER_NAME, USER_NAME_CHN, USER_ID, USER_GROUP_ID, USER_GROUP_NAME, ACCESS_MODEL_TIME, MODEL_FLAG, SYS_FLAG, SESSION_ID, LOGIN_IP, LOGIN_ADDRESS, LOGIN_LOG_ID) 
+    VALUES(SEQ_WIAS_USERS_MODEL_LOGS.NEXTVAL,#userName#,#usernamecn#,#userId#,#groupId#,#groupName#,#accessTime#,#modelFlag#,4,#sessionId#,#IP#,#IPAddress#,#loginLogId#)
+		
+ </insert>
+
+
+ 
+</sqlMap>

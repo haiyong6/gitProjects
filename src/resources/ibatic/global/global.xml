@@ -1,0 +1,627 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTD SQL Map 2.0//EN" "http://ibatis.apache.org/dtd/sql-map-2.dtd" >
+<sqlMap namespace="global">
+	
+<!-- 获取大区城市数据-->
+<resultMap class="com.ways.app.price.model.Area" id="getCityModalGroup1" groupBy="areaId">
+	<result property="areaId" column="areaid" nullValue="-" />
+	<result property="areaName" column="areaname" nullValue="-" />
+	<result property="citys" resultMap="global.getCityModalGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.City" id="getCityModalGroup2">
+	<result property="cityId" column="cityid" nullValue="-" />
+	<result property="cityName" column="cityname" nullValue="-" />
+</resultMap>
+<select id="getCityModal" resultMap="global.getCityModalGroup1">
+  select a.area_id areaid,a.area_name areaname,c.id cityid,c.region cityname
+       from pms_area_pcity p
+       inner join pms_area a on a.area_id = p.area_id
+       inner join pms_city c on c.id = p.city_id
+       where a.userid=$userId$
+       and c.id in(select city_id from faw_vw.fdm_model_city_mix m where m.year between '$beginDate_TPMix$' and '$endDate_TPMix$' group by city_id)
+       or(c.region like '%长春%')
+       <!-- 长春排在东北区最后面显示 -->
+       order by a.area_id,decode(c.region,'长春',1,0),c.id
+</select>
+
+<!-- 根据条件获取有效车型公共SQL -->
+<sql id="getSubModel">
+			<isEqual property="analysisContentType" compareValue="1">
+	       	     <!-- 返利返点表有效数据范围 -->
+				 select distinct v.fzdy2 submodelid 
+				 				 from tb_autoprice_month_rebate p ,cims_car_number v,pms_promotion_price pm
+						         where 
+						         	  v.id = p.version_id and v.id = pm.model_id and pm.price is not null
+						         	  <isEqual property="timeType" compareValue="1">
+						         	  		<!-- 时间点 -->
+						         	  		and p.year||'-'||lpad(p.month,2,0) = '$beginDate$'
+						         	  		and pm.sdate = replace('$beginDate$','-','')
+						         	  </isEqual>
+						         	  <isEqual property="timeType" compareValue="2">
+						         	  		<!-- 时间段 -->
+						         	  		and p.year||'-'||lpad(p.month,2,0) between '$beginDate$' and '$endDate$' 
+						         	  		and pm.sdate between replace('$beginDate$','-','') and replace('$endDate$','-','')  
+						         	  </isEqual>
+		   </isEqual>
+		   <isEqual property="analysisContentType" compareValue="2">
+		   		 <!--折扣有效数据范围 -->
+				 select distinct v.submodel_id submodelid from faw_vw.fdm_version_state_price p,faw_vw.fdm_car_version v
+						         where 
+						              v.version_id = p.version_id and p.price_fawvw is not null
+						              and p.week = 7
+						         	  <isEqual property="timeType" compareValue="1">
+						         	  		<!-- 时间点 -->
+						         	  		and p.ym = replace('$beginDate$','-','')
+						         	  </isEqual>
+						         	  <isEqual property="timeType" compareValue="2">
+						         	  		<!-- 时间段 -->
+						         	  		and p.ym between replace('$beginDate$','-','') and replace('$endDate$','-','')  
+						         	  </isEqual>
+		   </isEqual>
+		   <isEqual property="analysisContentType" compareValue="3">
+		   		 <!--成交价表有效数据范围 -->
+				 select distinct v.submodel_id submodelid from faw_vw.fdm_version_state_price p,faw_vw.fdm_car_version v
+						         where 
+						              v.version_id = p.version_id and p.price_fawvw is not null
+						              and p.week = 7
+						         	  <isEqual property="timeType" compareValue="1">
+						         	  		<!-- 时间点 -->
+						         	  		and p.ym = replace('$beginDate$','-','')
+						         	  </isEqual>
+						         	  <isEqual property="timeType" compareValue="2">
+						         	  		<!-- 时间段 -->
+						         	  		and p.ym between replace('$beginDate$','-','') and replace('$endDate$','-','')  
+						         	  </isEqual>
+						         	  
+		   </isEqual>
+		   <isEqual property="analysisContentType" compareValue="4">
+		   		 <!--销量表有效数据范围 -->
+				select  distinct v.sub_model_id submodelid
+			            from faw_vw.fdm_version_sales v
+			           inner join faw_vw.fdm_car_manf s
+			              on s.manf_id = v.manf_id
+			           Inner Join faw_vw.fdm_faw_body_type h
+			              On h.submodel_id = v.sub_model_id
+			             And h.group_id = '2'
+			           inner join faw_vw.fdm_ways_body_type i
+			              on i.body_type_id = h.body_type_id
+			           inner join faw_vw.fdm_car_version ve on v.version_id = ve.version_id
+			           inner join (select distinct i.model_id from faw_vw.v_faw_grade g inner join faw_vw.v_faw_info_grade i on g.grade_id = i.grade_id
+			           where g.sub_grade_name != '0'
+			           ) dd on dd.model_id = ve.model_id
+			           inner join faw_vw.fdm_faw_report_version_month m on m.model_id = ve.model_id 
+					   where v.year||lpad(v.month,2,0) between to_char(add_months(to_date('$beginDate$','YYYYMM'),-1),'YYYYMM') and to_char(add_months(to_date('$endDate$','YYYYMM'),-1),'YYYYMM')  and s.port_type_id != 1
+					   
+					   <isNotEmpty property="bodyTypeId">
+		             		<!-- 车身形式过滤条件 -->
+		             		<isNotEqual property="bodyTypeId" compareValue="0">
+			             		and h.body_type_id in($bodyTypeId$)
+		             		</isNotEqual>
+		           </isNotEmpty>
+		   </isEqual>
+
+</sql>
+
+<!-- 获取本品子车型和其竟品车型 -->
+<resultMap class="com.ways.app.price.model.BPSubModel" id="getSubmodelByBpGroup1" groupBy="subModelId">
+	<result property="subModelId" column="subModelBpId" nullValue="" />
+	<result property="subModelName" column="subModelName" nullValue="" />
+	<result property="pooAttributeId" column="bp_car_in" nullValue="" />
+	<result property="jpSubModelList" resultMap="global.getSubmodelByBpGroup2" />
+</resultMap> 
+<resultMap class="com.ways.app.price.model.SubModel" id="getSubmodelByBpGroup2">
+	<result property="subModelId" column="subModelJpId" nullValue="" />
+	<result property="subModelName" column="subModelJpName" nullValue="" />
+	<result property="pooAttributeId" column="jp_car_in" nullValue="" />
+</resultMap>
+<select id="getSubmodelByBp" resultMap="getSubmodelByBpGroup1">
+
+	with t1 as(
+		<include refid="getSubModel"/>
+	)
+	   select b.bp_model_id     subModelBpId,
+       c.submodel_name_cn            subModelName,
+       g.parent_grade_id bp_car_in,
+       b.jp_model_id    subModelJpId,
+       j.submodel_name_cn            subModelJpName,
+       g.parent_grade_id jp_car_in
+  from faw_vw.Fdm_Car_Bp_Jp b
+ Inner Join faw_vw.fdm_car_submodel c
+    On c.submodel_id = b.bp_model_id
+ Inner Join faw_vw.v_faw_info_grade ig
+    On ig.model_id = c.model_id
+ Inner Join faw_vw.v_faw_grade g
+    On ig.grade_id = g.grade_id
+ inner join faw_vw.fdm_car_manf s
+    on s.manf_id = b.bp_manf_id
+  left join faw_vw.fdm_car_submodel j
+    on j.submodel_id =b.jp_model_id
+  left join faw_vw.fdm_car_manf js
+    on js.manf_id = b.jp_manf_id
+ where g.group_id = 2
+   and exists (select 1 from t1 where t1.submodelid = b.bp_model_id)
+   and exists (select 1 from t1 where t1.submodelid = b.jp_model_id)
+ order by b.bp_model_sort
+</select>
+ 
+<!-- 获取细分市场下子车型关系 --> 
+<resultMap class="com.ways.app.price.model.Segment" id="getSubmodelBySegmentGroup1" groupBy="segmentId">
+	<result property="segmentId" column="parent_id" nullValue="" />
+	<result property="segmentName" column="parent_grade_name_cn" nullValue="" />
+	<result property="segmentList" resultMap="global.getSubmodelBySegmentGroup2" />
+</resultMap> 
+<resultMap class="com.ways.app.price.model.Segment" id="getSubmodelBySegmentGroup2" groupBy="segmentId">
+	<result property="segmentId" column="grade_id" nullValue="" />
+	<result property="segmentName" column="grade_name_cn" nullValue="" />
+	<result property="subModelList" resultMap="global.getSubmodelBySegmentGroup3" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.SubModel" id="getSubmodelBySegmentGroup3">
+	<result property="subModelId" column="submodelid" nullValue="" />
+	<result property="subModelName" column="submodelname" nullValue="" />
+	<result property="pooAttributeId" column="car_in" nullValue="" />
+</resultMap>
+<sql id="getUserGroupGradeSubModel">
+	with t1 as(
+		select d.*
+			  from (select distinct g.GRADE_NAME_EN || '-' || g.sub_grade_name Grade_Id,
+                          g.GRADE_NAME_EN parent_grade_name_cn,
+                          g.grade_order,
+                          g.sub_grade_name,
+                          g.parent_grade_name,
+                          g.GRADE_NAME_EN parent_id,
+                          g.GRADE_NAME_EN || '-' || g.sub_grade_name Grade_Name_Cn,
+                          c.submodel_id submodelid,
+                          c.submodel_name_cn submodelname,
+                          g.parent_grade_id Car_In,
+                          s.manf_id manfid,
+                          s.manf_name_cn manfName,
+                          p.brand_id brandid,
+                          p.brand_name_cn brandName,
+                          upper(getLetter(substr(p.brand_name_cn, 0, 1))) brandletter,
+                          upper(getLetter(substr(s.manf_name_cn, 0, 1))) manfletter
+            from faw_vw.v_faw_grade g
+           inner join faw_vw.v_faw_info_grade i
+              on g.grade_id = i.grade_id
+               inner join faw_vw.fdm_car_submodel c
+              on c.model_id = i.model_id
+           inner join faw_vw.fdm_car_manf s
+              on s.manf_id = c.manf_id
+           inner join faw_vw.fdm_car_brand p
+              on p.brand_id = c.brand_id
+			  where g.group_id = $userId$
+			  ) d
+			 ,(
+			 		<include refid="getSubModel"/>
+			  ) c 
+			  where c.submodelid = d.submodelid
+	)
+</sql>
+<select id="getSubmodelBySegment" resultMap="getSubmodelBySegmentGroup1">
+	<include refid="getUserGroupGradeSubModel"/>
+	        select d.* from t1 d order by d.grade_order
+</select>
+
+<!-- 获取品牌下子车型关系 -->
+<resultMap class="com.ways.app.price.model.LetterObj" id="getSubmodelByBrandGroup1" groupBy="letter">
+	<result property="letter" column="brandletter" nullValue="" />
+	<result property="objList" resultMap="global.getSubmodelByBrandGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.Brand" id="getSubmodelByBrandGroup2" groupBy="brandId">
+	<result property="brandId" column="brandid" nullValue="" />
+	<result property="brandName" column="brandname" nullValue="" />
+	<result property="subModelList" resultMap="global.getSubmodelByBrandGroup3" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.SubModel" id="getSubmodelByBrandGroup3">
+	<result property="subModelId" column="submodelid" nullValue="" />
+	<result property="subModelName" column="submodelname" nullValue="" />
+	<result property="pooAttributeId" column="car_in" nullValue="" />
+</resultMap>
+<select id="getSubmodelByBrand" resultMap="getSubmodelByBrandGroup1">
+
+	<include refid="getUserGroupGradeSubModel"/>			
+	select * from t1 order by t1.brandletter,t1.brandId,t1.submodelid
+</select>
+
+<!-- 获取厂商 下子车型关系 -->
+<resultMap class="com.ways.app.price.model.LetterObj" id="getSubmodelByManfGroup1" groupBy="letter">
+	<result property="letter" column="manfletter" nullValue="" />
+	<result property="objList" resultMap="global.getSubmodelByManfGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.Manf" id="getSubmodelByManfGroup2" groupBy="manfId">
+	<result property="manfId" column="manfid" nullValue="" />
+	<result property="manfName" column="manfname" nullValue="" />
+	<result property="subModelList" resultMap="global.getSubmodelByManfGroup3" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.SubModel" id="getSubmodelByManfGroup3">
+	<result property="subModelId" column="submodelid" nullValue="" />
+	<result property="subModelName" column="submodelname" nullValue="" />
+	<result property="pooAttributeId" column="car_in" nullValue="" />
+</resultMap>
+<select id="getSubmodelByManf" resultMap="getSubmodelByManfGroup1">
+
+	<include refid="getUserGroupGradeSubModel"/>			
+	select * from t1 order by t1.manfletter,t1.manfid,t1.submodelid
+</select>
+
+<!-- 通过条件获取有效厂商 -->
+<resultMap class="com.ways.app.price.model.LetterObj" id="getManfGroup1" groupBy="letter">
+	<result property="letter" column="letter" nullValue="-"/>
+	<result property="objList" resultMap="global.getManfGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.Manf" id="getManfGroup2">
+	<result property="manfId" column="manfId" nullValue="-"/>
+	<result property="manfName" column="manfName" nullValue="-"/>
+</resultMap>
+<select id="getManfModal" resultMap="getManfGroup1">
+	with t1 as(
+		select d.*
+			  from (select distinct g.grade_id,
+			               g.grade_name_cn,
+			               g.parent_id,
+			               c.id submodelid,
+			               c.name submodelname,
+			               s.car_in,
+			               s.id manfid,
+			               s.scs manfName,
+			               p.id brandid,
+			               p.name brandName,
+			               upper(getLetter(substr(p.name,0,1))) brandletter,
+	              		   upper(getLetter(substr(s.scs,0,1))) manfletter
+			          from wias_grade g
+			         inner join wias_info_grade i on g.grade_id = i.grade_id
+			         inner join cims_car_brand b on b.id = i.brand_id
+			         inner join cims_car_brandchild c on c.parent_id = b.id
+			         inner join cims_car_pbrand p on p.id = c.pbrandid
+			         inner join view_cims_scs s on s.manfid = c.scs and s.brandid = c.pbrandid
+			         where g.group_id = $userId$
+			  ) d
+			 ,(
+			 		<isEqual property="analysisContentType" compareValue="1">
+			       	     <!-- 返利返点表有效数据范围 -->
+						 select distinct v.fzdy2 submodelid ,b.scs||'~'||b.PbrandId manf_brand_id
+						 				 from tb_autoprice_month_rebate p ,cims_car_number v,Cims_Car_Brandchild b,pms_promotion_price pm
+								         where 
+								         	  v.id = p.version_id and v.id = pm.model_id and v.fzdy2 = b.id and pm.price is not null
+								         	  <isEqual property="timeType" compareValue="1">
+								         	  		<!-- 时间点 -->
+								         	  		and p.year||'-'||lpad(p.month,2,0) = '$beginDate$'
+								         	  		and pm.sdate = replace('$beginDate$','-','')
+								         	  </isEqual>
+								         	  <isEqual property="timeType" compareValue="2">
+								         	  		<!-- 时间段 -->
+								         	  		and p.year||'-'||lpad(p.month,2,0) between '$beginDate$' and '$endDate$' 
+								         	  		and pm.sdate between replace('$beginDate$','-','') and replace('$endDate$','-','')  
+								         	  </isEqual>
+				   </isEqual>
+				   <isEqual property="analysisContentType" compareValue="2">
+				   		 <!--折扣有效数据范围 -->
+						 select distinct v.fzdy2 submodelid,b.scs||'~'||b.PbrandId manf_brand_id
+						 		          from pms_promotion_price p,cims_car_number v,Cims_Car_Brandchild b
+								         where 
+								              v.id = p.model_id and v.fzdy2 = b.id and p.price is not null
+								         	  <isEqual property="timeType" compareValue="1">
+								         	  		<!-- 时间点 -->
+								         	  		and p.sdate = replace('$beginDate$','-','')
+								         	  </isEqual>
+								         	  <isEqual property="timeType" compareValue="2">
+								         	  		<!-- 时间段 -->
+								         	  		and p.sdate between replace('$beginDate$','-','') and replace('$endDate$','-','')  
+								         	  </isEqual>
+				   </isEqual>
+				   <isEqual property="analysisContentType" compareValue="3">
+				   		 <!--成交价表有效数据范围 -->
+						 select distinct v.fzdy2 submodelid,b.scs||'~'||b.PbrandId manf_brand_id from pms_promotion_price p,cims_car_number v,Cims_Car_Brandchild b
+								         where 
+								              v.id = p.model_id and v.fzdy2 = b.id and p.price is not null
+								         	  <isEqual property="timeType" compareValue="1">
+								         	  		<!-- 时间点 -->
+								         	  		and p.sdate = replace('$beginDate$','-','')
+								         	  </isEqual>
+								         	  <isEqual property="timeType" compareValue="2">
+								         	  		<!-- 时间段 -->
+								         	  		and p.sdate between replace('$beginDate$','-','') and replace('$endDate$','-','')  
+								         	  </isEqual>
+				   </isEqual>
+			  ) c 
+			  where c.submodelid = d.submodelid and d.manfId = c.manf_brand_id
+	)			
+	 Select Distinct T1.manfId,T1.manfName,
+   			Upper(Getletter(Substr(T1.Manfname, 0, 1))) As Letter
+       From T1
+     Order By Upper(Getletter(Substr(T1.Manfname, 0, 1))), T1.Manfid
+</select>
+
+<!-- 获取子车型下型号数据 -->
+<resultMap class="com.ways.app.price.model.SubModel" id="getVersionModalByCommonGroup1" groupBy="subModelId">
+	<result property="subModelId" column="submodelid" nullValue="" />
+	<result property="subModelName" column="submodelname" nullValue="" />
+	<result property="versionList" resultMap="global.getVersionModalByCommonGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.Version" id="getVersionModalByCommonGroup2">
+	<result property="versionId" column="vid" nullValue="" />
+	<result property="versionName" column="vanme" nullValue="" />
+	<result property="msrp" column="msrp" nullValue="-" />
+	<result property="mix" column="mix" nullValue="-" />
+</resultMap>
+<select id="getVersionModalByCommon" resultMap="getVersionModalByCommonGroup1">
+	with t1 as(
+		 select  v.version_id vid,
+		         v.parentid,
+		         c.submodel_id submodelid,
+		         c.submodel_name_cn submodelname,
+		         v.year fyear,
+		         v.version_trim_name_cn typeid,
+		         c.submodel_name_cn || ' ' || v.year || ' ' || v.Version_Short_Name_Cn vanme
+		        from faw_vw.fdm_car_submodel c
+				 inner join faw_vw.fdm_car_version v on v.submodel_id = c.submodel_id
+		       inner join(
+				           <isEqual property="analysisContentType" compareValue="1">
+					       	     <!-- 返利返点表有效数据范围 -->
+								 select distinct p.version_id vid from tb_autoprice_month_rebate p,pms_promotion_price pm
+								 		where p.version_id = pm.model_id
+								 		<isEqual property="timeType" compareValue="1">
+						         	  		<!-- 时间点 -->
+						         	  		and p.year||'-'||lpad(p.month, 2, 0) = '$beginDate$'
+						         	  		and pm.sdate = replace('$beginDate$','-','')
+						         	   </isEqual>
+						         	   <isEqual property="timeType" compareValue="2">
+						         	  		<!-- 时间段 -->
+						         	  		and p.year||'-'||lpad(p.month, 2, 0) between '$beginDate$' and '$endDate$'
+						         	  		and pm.sdate between replace('$beginDate$','-','') and replace('$endDate$','-','') 
+						         	   </isEqual>
+						   </isEqual>
+						   <isNotEqual property="analysisContentType" compareValue="1">
+						   		 <!--成交价表有效数据范围 -->
+								 select distinct p.version_id vid from faw_vw.fdm_version_state_price p 
+								 		where 
+								 			p.price_fawvw is not null and p.week = 7
+								 			<isEqual property="timeType" compareValue="1">
+							         	  		<!-- 时间点 -->
+							         	  		and p.ym = replace('$beginDate$','-','')
+							         	   </isEqual>
+							         	   <isEqual property="timeType" compareValue="2">
+							         	  		<!-- 时间段 -->
+							         	  		and p.ym between replace('$beginDate$','-','') and replace('$endDate$','-','') 
+							         	   </isEqual>
+						   </isNotEqual>
+				)d on d.vid = v.version_id
+		        where c.submodel_id in ($modelIds$) and v.is_installed_flag != 1
+	)
+	,t3 as(
+		<!-- 获取型号最新MIX -->
+		select * from(
+				select t1.*,
+					   to_char(m.endpercent * 100) initMix,
+					   to_char(m.currentdate) yearmonth,
+					   row_number() over(partition by t1.vid order by m.currentdate desc) mixrn
+					   from t1 
+				       left join sale_scale m on t1.vid = m.car_config_id
+		)where mixrn = 1
+	)
+	,t4 as (
+		<!-- 如果上下代并存，只取最新一代，且上一代MIX时间相同则相加 -->
+		select * from(
+			select 
+				d.*, 
+				row_number() over(partition by d.groupid order by d.vid desc) vidrn,<!-- 上下代新型号排序 -->
+				to_char(sum(d.initMix) over(partition by d.groupid),'fm99999990.00') mix
+				from(
+			    	select t3.*,
+			    		   case when t3.parentid = 0 or exists(select 1 from t1 where t1.parentid = t3.vid) then t3.vid 
+			    		   		else t3.parentid 
+			    		   end groupid from t3
+				) d
+		)where vidrn = 1
+	)
+	,t5 as(
+		<!-- 去除ID不同，组合型号名称相同的记录，取ID最大的 -->
+		select * from (
+						select t4.*,row_number() over(partition by t4.vanme order by t4.vid desc) namern from t4
+			    	)d where d.namern = 1
+	)
+	select t5.*,d.msrp
+			   ,row_number() over(partition by t5.submodelid order by t5.fyear desc,to_number(d.msrp) asc,t5.typeid asc) ordern
+		       from t5
+		       left join (
+		            select * from (
+                          select p.car_name vid,to_char(p.direction_price * 10000) msrp,
+                                 row_number() over(partition by p.car_name order by p.msrp_adjust_date desc) rn
+                                 from cims_direction_price p 
+		            ) where rn = 1
+		       )d on t5.vid = d.vid
+</select>
+
+
+<!-- 校验弹出框有效数据  -->
+<resultMap class="com.ways.app.price.model.SubModel" id="checkPopBoxTpDataGroup1" groupBy="subModelId">
+	<result property="subModelId" column="mid" nullValue="" />
+	<result property="versionList" resultMap="global.checkPopBoxTpDataGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.Version" id="checkPopBoxTpDataGroup2">
+	<result property="versionId" column="vid" nullValue="" />
+</resultMap>
+<select id="checkPopBoxTpData" resultMap="checkPopBoxTpDataGroup1">
+	with t1 as(
+		<isNotEmpty property="vid">
+			select v.fzdy2 mid,v.id vid from cims_car_number v where v.id in($vid$)
+		</isNotEmpty>
+		<isNotEmpty property="mid">
+			select v.fzdy2 mid,v.id vid  from cims_car_number v where v.fzdy2 in($mid$)	
+		</isNotEmpty>
+	)
+	select t1.vid,t1.mid 
+		   from t1
+		   where not exists(
+				<!-- 成交价校验 -->
+					select 1 
+						   from pms_promotion_price p 
+						   inner join cims_car_number v on v.id = p.model_id
+						   where p.sdate = replace('$beginDate$','-','') and p.price is not null
+								<isNotEmpty property="vid">
+									and p.model_id = t1.vid
+								</isNotEmpty>
+								<isNotEmpty property="mid">
+									and v.fzdy2 = t1.mid
+								</isNotEmpty> 
+		   )
+</select>
+
+
+<!-- 获取用户组细分市场及子细分市场 -->
+<resultMap class="com.ways.app.price.model.Segment" id="getSegmengGroup1" groupBy="segmentId">
+	<result property="segmentId" column="level1_id" />
+	<result property="segmentName" column="level1_name" />
+	<result property="segmentList" resultMap="global.getSegmengGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.Segment" id="getSegmengGroup2">
+	<result property="segmentId" column="level2_id" />
+	<result property="segmentName" column="level2_name" />
+</resultMap>
+<select id="getSegmentAndChildren" resultMap="getSegmengGroup1">
+with t as
+ (select v.grade_name_cn, wmsys.wm_concat(v.grade_id) grade_val,
+ case when length(v.grade_name_cn) = 3 then v.grade_name_cn
+                else 
+                  case when length(v.grade_name_cn) = 2 then v.grade_name_cn || '1' 
+                    else v.grade_name_cn || '11' end end grade_order
+    from faw_vw.v_faw_grade v
+   where v.parent_grade_name in ('$segmentType$') 
+   <isEqual property="analysisContentType" compareValue="4">
+    and v.sub_grade_name != '0'
+   </isEqual>
+   group by v.grade_name_cn)
+select v.grade_name_cn level1_name,
+       v.grade_name_cn || '-' || v.sub_grade_name level2_name,
+       listagg(v.grade_id, ',') within group (order by v.parent_grade_id) level2_id,
+       t.grade_val level1_id,
+       t.grade_order
+  from faw_vw.v_faw_grade v
+  left join t
+    on v.grade_name_cn = t.grade_name_cn
+ where v.parent_grade_name in ('$segmentType$')
+ <isEqual property="analysisContentType" compareValue="4">
+    and v.sub_grade_name != '0'
+  </isEqual>
+ group by v.grade_name_cn, v.sub_grade_name, t.grade_val, t.grade_order
+ order by t.grade_order
+
+              
+</select>
+
+<!-- 获取厂商 -->
+<resultMap class="com.ways.app.price.model.LetterObj" id="getManfGroup1" groupBy="letter">
+	<result property="letter" column="letter" nullValue="-"/>
+	<result property="objList" resultMap="global.getManfGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.Manf" id="getManfGroup2">
+	<result property="manfId" column="manfId" nullValue="-"/>
+	<result property="manfName" column="manfName" nullValue="-"/>
+</resultMap>
+<select id="getManf" resultMap="getManfGroup1">
+	select * from (
+		select distinct s.id manfid,
+                        s.manf_name_cn manfname,
+                        upper(getLetter(substr(s.manf_name_cn, 0, 1))) letter
+			            from faw_vw.v_faw_info_grade g
+			            inner join faw_vw.fdm_car_submodel ch
+			            on g.model_id = ch.model_id
+			            inner join faw_vw.v_car_manf_brand s
+			            on s.manf_id = ch.manf_id
+			            and s.brand_id = ch.brand_id
+			            inner join faw_vw.fdm_car_brand p
+			            on ch.brand_id = p.brand_id
+			         where s.port_type_id != 1
+		       and exists (select 1 from faw_vw.fdm_version_sales v where v.manf_id = s.manf_id and v.brand_id = s.brand_id and v.year||lpad(v.month,2,0) between to_char(add_months(to_date('$beginDate$','YYYYMM'),-1),'YYYYMM') and to_char(add_months(to_date('$endDate$','YYYYMM'),-1),'YYYYMM'))
+	) order by letter,manfname
+</select>
+
+<!-- 获取品牌 -->
+<resultMap class="com.ways.app.price.model.LetterObj" id="getBrandGroup1" groupBy="letter">
+	<result property="letter" column="letter" nullValue="-"/>
+	<result property="objList" resultMap="global.getBrandGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.Brand" id="getBrandGroup2" >
+	<result property="brandId" column="brandId" nullValue="-"/>
+	<result property="brandName" column="brandName" nullValue="-"/>
+</resultMap>
+<select id="getBrand" resultMap="getBrandGroup1" >
+	select * from (
+	        select    distinct s.brand_id brandid,
+                      s.brand_name_cn brandname,
+                      upper(getLetter(substr(s.brand_name_cn, 0, 1))) letter
+			          from faw_vw.v_faw_info_grade g
+			         inner join faw_vw.fdm_car_submodel b
+			            on g.model_id = b.model_id
+			         inner join faw_vw.fdm_car_brand s
+			            on b.brand_id = s.brand_id
+	               where 
+	               exists (select 1 from faw_vw.fdm_version_sales v where v.brand_id = s.brand_id and v.year||lpad(v.month,2,0) between to_char(add_months(to_date('$beginDate$','YYYYMM'),-1),'YYYYMM') and to_char(add_months(to_date('$endDate$','YYYYMM'),-1),'YYYYMM'))
+	) order by letter,brandname
+</select>
+
+<!-- 获取车身形式 -->
+<select id="getBodyType" resultClass="com.ways.app.price.model.BodyType">
+       select distinct p.body_type_id bodyTypeId, p.body_type_name_cn bodyTypeName
+  from faw_vw.fdm_faw_body_type c
+ inner join faw_vw.fdm_ways_body_type p
+    on c.body_type_id = p.body_type_id
+</select>
+<!-- 常用型号组 -->
+<resultMap class="com.ways.app.price.model.AutoCustomGroup" id="getAutoCustomGroup1" groupBy="modelID">
+	<result property="modelID" column="modelID" nullValue=""/>
+	<result property="modelName" column="modelName" nullValue=""/>
+	<result property="modelEName" column="modelEName" nullValue=""/>
+	<result property="objectGroupList" resultMap="global.getAutoCustomGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.ObjectGroup" id="getAutoCustomGroup2" groupBy="objectGroupID">
+	<result property="objectGroupID" column="objectGroupID" nullValue=""/>
+	<result property="objectGroup" column="objectGroup" nullValue=""/>
+	<result property="versionList" resultMap="global.getAutoCustomGroup3" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.Version" id="getAutoCustomGroup3">
+	<result property="versionId" column="versionId" nullValue=""/>
+	<result property="versionName" column="versionName" nullValue=""/>
+	<result property="letter" column="Versioinsort" nullValue=""/>
+	<result property="mix" column="mix" nullValue="-"/>
+	<result property="msrp" column="msrp" nullValue="-"/>
+</resultMap>
+<select id="getAutoCustomGroup" resultMap="getAutoCustomGroup1">
+	With MsrpData As(                       
+	    Select * From (
+	           Select a.Car_Name,a.Direction_Price * 10000 As Msrp,
+	                  To_Char(a.Msrp_Adjust_Date, 'yyyymm') As Msrp_Adjust_Date,
+	                  Row_Number() Over(Partition By a.Car_Name Order By a.Msrp_Adjust_Date Desc) Rn
+	             From Cims_Direction_Price a
+	             Inner Join Auto_Custom_Version v On a.Car_Name = v.version_id	           
+	    ) Where Rn = 1
+	),MixData As(
+	   Select * From (
+	          Select  m.Car_config_Id,
+	                  To_Char(m.Endpercent * 100,'fm99999990.00') mix,
+	                  To_Char(m.Currentdate) Yearmonth,
+	                  Row_Number() Over(Partition By m.Car_Config_Id Order By m.Currentdate Desc) Mixrn
+	            From  Sale_Scale m 
+	            Inner Join Auto_Custom_Version v On m.car_config_id = v.version_id
+		)Where Mixrn = 1
+	)
+       Select b.id As modelID,
+	       	  b.name As modelName,
+	       	  b.name_eng As modelEName,
+	          o.Object_Group_Id As objectGroupID,       
+	          o.Object_Group As objectGroup,
+	          o.Fsort As Objectsort,
+	          n.id As versionId,
+	          n.sm As versionName,
+	          v.Fsort As Versioinsort,
+	          m.Msrp,
+       		  mi.Mix
+	  From Auto_Custom_Version v
+	  Inner Join cims_car_number n On n.id = v.version_id
+	  Inner Join Auto_Custom_Object_Group o On v.Object_Group_Id = o.Object_Group_Id
+	  Inner Join cims_car_brandchild b On o.model_id = b.id
+	  Left Join MsrpData m On n.Id = m.Car_name
+ 	  Left Join MixData mi On n.Id = mi.Car_config_Id
+ 	  order by Objectsort,Versioinsort
+</select>
+
+</sqlMap>

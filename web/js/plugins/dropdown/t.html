@@ -1,0 +1,109 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"> 
+<html xmlns="http://www.w3.org/1999/xhtml"> 
+<head> 
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" /> 
+<title>js测试</title>
+<script type="text/javascript" language="javascript" src="jq.js"></script>
+<script type="text/javascript" language="javascript" src="dropdownlist.js"></script>
+<script>
+
+/*
+	参数说明
+	id:'',//假设id为dr1,则可以用方法dr1.disable(),dr1.enable(),dr1.init(data,selected)/可用作联动/,dr1.text,dr1.value;$('#dr1').val();dr1.onchange=callback	
+	width:100,//显示宽
+	listboxwidth:0,//下拉框宽为0表示同上面的显示宽度
+	listboxmaxheight:200,//下拉框最大高度，超过即显示滚动条
+	listboxalign:'auto',//下拉列表的对齐方式，可选值left,right,auto
+	columns:1, //显示列数
+	checkbox:false,//是否复选
+	maxchecked:3,//最多同时选择数，checkbox=true时有效
+	selectedtext:'',//checkbox=true时有效,选择框文字,为空显示为选中项，非空时固定不变
+	requiredvalue:[],//必须选择的值,显示为不可点击状态，checkbox=true时有效，
+	disabled:false,//是否禁用
+	selectclass:'ddl-select',//选框样式
+	listboxclass:'ddl-listbox',//展开的列表框样式
+	selected:[],//选中的对象value，
+	data:{},//数据，格式：{value:name}
+	onchange:null
+*/
+$(function(){
+$('#s11').dropdownlist({
+	id:'dr1',//唯一标识，通过此ID调用他的方法disabled:禁用，enable：启用, init(data,selected)：重载数据，参数同初始化的,
+	listboxwidth:200,//下拉框宽
+	width:50,
+	listboxalign:'auto',
+	listboxmaxheight:200,//下拉框高
+	columns:1, //显示列数
+	checkbox:false,//是否复选
+	disabled:false,//是否禁用
+	selected:['3'],//默认选中的对象value
+	data:{'1':'我是'+Math.random(),'2':'我是2','3':'我是3','4':'我是4','5':'我是5','6':'我是6'},//数据，格式：{value:name}	
+	onchange:function(text,value){ //回调函数
+		//alert(text+','+value)
+	}
+});
+
+$('#s22').dropdownlist({
+	id:'dr2',
+	columns:3,
+	selectedtext:'',
+	listboxwidth:0,//下拉框宽
+	maxchecked:4,
+	checkbox:true,
+	listboxmaxheight:800,
+	width:400,
+	requiredvalue:['1','3'],
+	selected:['1','3'],
+	data:{'1':'我是1','2':'我是;2','3':';我;是;3','4':'我是4','5':'我是5','6':'我是6','7':'我是7','8':'我是8'},//数据，格式：{value:name}
+	onchange:function(text,value){
+		alert(text+','+value)
+	}
+});
+
+
+});
+</script>
+<style>
+
+/*下拉框样式*/
+
+.dropdownlist .ddl-select,.dropdownlist .hover,.dropdownlist .ddl-disabled{cursor:default;padding:0px;color:#000;border:solid 1px #ccc;height:20px;padding-right:20px;background:#fff url(downarrow.jpg) no-repeat right; overflow:hidden}
+/*鼠标经过下拉框的样式*/
+.dropdownlist .hover,.dropdownlist .ddl-select:hover{border-color:#aaa;}
+/*下拉选项样式*/
+.dropdownlist table,.dropdownlist tbody tr,.dropdownlist tbody td{border:none;border-collapse: collapse;border-spacing: 0px 0px;}
+/*下拉列表样式*/
+.dropdownlist .ddl-listbox{border:solid 1px #ccc;color:#000;overflow:hiden;overflow-y:auto;}
+/*禁用时的样式*/
+.dropdownlist .ddl-disabled{color:#ccc;background:#fff url(downarrow.jpg) no-repeat right;}
+/*下拉选项样式*/
+.dropdownlist tbody td{color:#000;background:#fff;height:30px;}
+/*下拉选项鼠标经过样式*/
+.dropdownlist tbody td.hover,.dropdownlist tbody td:hover{color:#fff;background:#00f}
+/*tfoot*/
+.dropdownlist tfoot{background:#f0f0f0;}
+/*信息样式*/
+.dropdownlist tfoot span.info{font-size:12px;color:orange;}
+/*按钮区样式*/
+.dropdownlist tfoot span.btn-area{float:right;}
+/*确定按钮样式*/
+.dropdownlist tfoot .btn-ok {color:red;}
+/*取消按钮样式*/
+.dropdownlist tfoot .btn-cancel {color:#666;}
+
+</style>
+</head>
+<body>
+自定义的JQuery下拉框列表扩展，支持多选和单选两种方式
+多选时可以设置必选项和最多选择项，通过里面的方法可简单实现级联联动效果
+不支持自动完成和下拉输入功能
+<form method="get">
+<a href="#" onclick="dr1.disable();">disabled</a>
+<a href="#" onclick="dr1.enable();">enable</a>
+<div id='s11' class="dropdownlist"></div>
+<div id='s22' class="dropdownlist"></div>
+<input type="submit" value="提交" />
+会提交一个名为dr1和dr2的参数，即你选中项的值. 其中dr1和dr2是上面下拉框设置的值.
+</form>
+</body>
+</html>

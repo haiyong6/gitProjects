@@ -1,0 +1,59 @@
+<!DOCTYPE sqlMapConfig PUBLIC "-//iBATIS.com//DTD SQL Map Config 2.0//EN"  
+  "http://ibatis.apache.org/dtd/sql-map-config-2.dtd"> 
+<sqlMapConfig>
+	<settings
+		cacheModelsEnabled="true"
+		enhancementEnabled="true"
+		lazyLoadingEnabled="true"
+		maxRequests="320"
+		maxSessions="100"
+		maxTransactions="50"
+		useStatementNamespaces="true"
+	/>
+	
+	<!-- ************************************价格监测 开始*********************************-->
+		<!-- 利润对比分析 -->
+		<sqlMap resource="ibatic/price/Profit.xml"/>
+		<!-- 城市成交价对比分析 -->
+		<sqlMap resource="ibatic/price/cityTpRatio.xml"/>
+		<!-- 型号折扣对比 -->
+		<sqlMap resource="ibatic/price/versionDiscountRatio.xml"/>
+		<!-- 公共弹出框 -->
+		<sqlMap resource="ibatic/global/global.xml"/>
+		<!-- 利润城市分布 -->
+		<sqlMap resource="ibatic/price/CityProfitDistribution.xml"/>
+		<!-- 价格降幅 -->
+		<sqlMap resource="ibatic/price/priceIndex.xml"/>
+	<!-- ************************************价格监测 结束*********************************-->
+	
+	<!-- ************************************价格销量 开始*********************************-->
+		<!--价格段销量公共 -->
+		<sqlMap resource="ibatic/pricesale/PriceSaleGlobal.xml"/>
+		<!-- 价格段销量分析-->
+		<sqlMap resource="ibatic/pricesale/VolumeByPriceRange.xml"/>
+		
+	<!-- ************************************价格监测 结束*********************************-->
+	
+	<!-- ************************************产品配置 开始*********************************-->
+		<!-- 配置公共 -->
+		<sqlMap resource="ibatic/product/configGlobal.xml"/>
+		<!-- 配置型号查询 -->
+		<sqlMap resource="ibatic/product/configVersionQuery.xml"/>
+	<!-- ************************************产品配置 结束*********************************-->
+	
+	<!-- ************************************商务政策 开始*********************************-->
+		
+		<!-- 车型利润分析 -->
+		<sqlMap resource="ibatic/policy/ModelProfitPrice.xml"/>
+		<!-- 车型利润分析(查车型) -->
+		<sqlMap resource="ibatic/policy/ModelProfitPriceGlobal.xml"/>
+		
+	<!-- ************************************商务政策 结束*********************************-->
+	
+	
+	<!-- ************************************模块日志 开始*********************************-->
+		<!-- 模块日志记录 -->
+		<sqlMap resource="ibatic/moduleLog/moduleLog.xml"/>
+	<!-- ************************************模块日志 结束*********************************-->
+	
+</sqlMapConfig> 

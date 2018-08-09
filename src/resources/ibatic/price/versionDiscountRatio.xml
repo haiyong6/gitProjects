@@ -1,0 +1,385 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTD SQL Map 2.0//EN" "http://ibatis.apache.org/dtd/sql-map-2.dtd" >
+<sqlMap namespace="discountRatio">
+
+<!-- 初始化时间，从用户购买数据表取 -->
+<select id="initDate" resultClass="java.util.HashMap">
+	with t1 as(
+		<!--成交价表有效数据范围 -->
+			select distinct
+			       first_value(p.sdate) over(order by p.sdate asc) begindate,
+			       first_value(p.sdate) over(order by p.sdate desc) enddate
+			       from pms_promotion_price p where p.sdate != 197001
+	)
+	 select 
+	 	   <![CDATA[
+	       case when g.sdate < t1.begindate then to_char(to_date(t1.begindate,'YYYY-MM'),'YYYY-MM') else to_char(to_date(substr(g.sdate,0,6),'YYYY-MM'),'YYYY-MM') end begindate
+	       ,case when g.edate > t1.enddate then to_char(to_date(t1.enddate,'YYYY-MM'),'YYYY-MM') else to_char(to_date(substr(g.edate,0,6),'YYYY-MM'),'YYYY-MM') end enddate
+	       ]]>
+	       from wias_user_purchase_date g 
+	       full join t1 on 1=1
+	       where g.group_id=$userId$ and g.model='transprice'
+</select>
+
+<!-- 获取型号信息公共SQL，作用于导出 -->
+<sql id="getVersionInfo">
+	select 
+	       v.id versionid,
+	       b.name || '{0}' || v.typeid versionname,
+	       b.name_eng || ' ' || v.typeideng versionnameen,
+	       v.car_config_bm versioncode,
+	       v.fyear modelyear,
+	       to_char(v.fzdy6,'YYYY-MM-DD') versionLaunchDate,
+	       v.typeid,
+	       v.typeideng typeiden,
+	       s.scs manfname,
+	       s.scs_eng manfnameen,
+	       b.name submodelname,
+	       b.name_eng submodelnameen,
+	       pl.pl discharge,
+	       pd.sm gearmode,
+	       <!-- 如果是大众和奥迪品牌的型号，需要将DCT转换为DSG -->
+	       case when v.pbrandid in(5,19) and pd.smeng = 'DCT' then 'DSG'
+	       else pd.smeng end gearmodeen,
+	       cs.lx bodytype,
+	       cs.lxeng bodytypeen,
+	       wg.PARENT_GRADE_NAME||' '||wg.GRADE_NAME_EN||'-'||wg.SUB_GRADE_NAME gradename,
+          wg.PARENT_GRADE_NAME||' '||wg.GRADE_NAME_EN||'-'||wg.SUB_GRADE_NAME gradenameen
+	       from cims_car_number v 
+	       inner join cims_car_brandchild b on b.id = v.fzdy2
+	       inner join cims_scs s on s.id = v.scs       
+	       inner join cims_car_pl pl on pl.id = v.pl
+	       inner join cims_car_pdfs pd on pd.id = v.pdfs
+	       inner join pms_car_hatchback cs on cs.id = v.hatchback
+	       left join faw_info_grade g
+      on g.brand_id = b.parent_id
+    left join v_faw_grade wg
+      on wg.grade_id = g.grade_id
+     and wg.group_id = $userId$
+	       where v.id in($vid$)
+</sql>
+
+<!-- <select id="loadVersionDiscountRatioChartAndTable" resultClass="com.ways.app.price.model.VersionInfoEntity">
+	with t1 as(
+		查询型号当月以及上月按城市加权成交价
+		select 
+			d.*,s.tp vstp 
+			from (
+					当月型号加权成交价取值，如果没有MIX，则取各城市TP加权平均
+					select distinct e.vid,
+						   case when e.value is not null then sum(e.mix) over(partition by e.vid)  
+								else avg(e.mix) over(partition by e.vid) 
+						   end tp
+						   sum(e.mix) over(partition by e.vid) tp 
+					       from (
+					            select 
+					                   d.vid
+					                   ,case when min(d.value) is not null then to_char(min(d.tp) * ratio_to_report(sum(d.value)) over(partition by d.vid))
+					                   判断城市个数如果城市个数为一的话加权成交价直接为最低参考价
+				                   	   <isEqual property="cityNum" compareValue="1">
+				                   	 	else to_char(min(d.tp))
+				                   	   </isEqual>
+				                   	   判断城市个数如果城市个数不为一的话长春的加权成交价为零
+				                   	   <isNotEqual property="cityNum" compareValue="1">
+				                   	    else null
+				                   	   </isNotEqual>
+					                    end mix
+					                   ,min(d.value) value
+					                   from (
+					                   		select 
+					                        	 p.car_model vid,
+					                             to_char(p.new_tp * 10000) tp,
+					                             p.region,
+					                             m.value,
+					                             row_number() over(partition by p.car_model,p.region order by p.Week Desc,p.New_tp asc) rn 
+					                             from pms_price_promotion_auto_view p
+					                             inner join cims_car_number v on v.id = p.car_model
+					                             left join Transaction_Price_City_Mix m on m.sub_model_id = v.fzdy2 and m.city_id=p.region and m.year = '$beginDate_TPMix$'
+					                             where p.Batch_Yearmonth = '$beginDate$' and p.car_model in($vid$)
+					                             and p.region in($citys$) and p.Week In(4,5) and p.New_tp is not null and p.New_tp != 0.00
+					                   )d where d.rn = 1
+					                   group by d.vid,d.region
+					       )e
+			)d	
+			left join (
+				上月成交价查询
+				select distinct e.vid,
+						   case when e.value is not null then sum(e.mix) over(partition by e.vid)  
+								else avg(e.mix) over(partition by e.vid) 
+						   end tp
+						   sum(e.mix) over(partition by e.vid) tp
+					       from (
+					            select 
+					                   d.vid
+					                   ,case when min(d.value) is not null then to_char(min(d.tp) * ratio_to_report(sum(d.value)) over(partition by d.vid))
+				                   		 判断城市个数如果城市个数为一的话加权成交价直接为最低参考价
+			                   	   		 <isEqual property="cityNum" compareValue="1">
+			                   	 		 else to_char(min(d.tp))
+			                   	   		 </isEqual>
+			                   	   		 判断城市个数如果城市个数不为一的话长春的加权成交价为零
+			                   	   		 <isNotEqual property="cityNum" compareValue="1">
+			                   	    	 else null
+			                   	   	     </isNotEqual>
+					                    end mix
+					                   ,min(d.value) value
+					                   from (
+					                   		select 
+					                        	 p.car_model vid,
+					                             to_char(p.new_tp * 10000) tp,
+					                             p.region,
+					                             m.value,
+					                             row_number() over(partition by p.car_model,p.region order by p.Week Desc,p.New_tp asc) rn 
+					                             from pms_price_promotion_auto_view p
+					                             inner join cims_car_number v on v.id = p.car_model
+					                             left join Transaction_Price_City_Mix m on m.sub_model_id = v.fzdy2 and m.city_id=p.region and m.year = '$beginDate_TPMix$'
+					                             where p.Batch_Yearmonth = to_char(add_months(to_date('$beginDate$','YYYY-MM'),-1),'YYYY-MM') 
+					                             and p.car_model in($vid$) and p.region in($citys$) 
+					                             and p.Week In(4,5) and p.New_tp is not null and p.New_tp != 0.00
+					                   )d where d.rn = 1
+					                   group by d.vid,d.region
+					       )e
+			)s on s.vid = d.vid
+	)
+	,t2 as(
+		获取型号当月以及上月最新指导价
+		select d.*,s.msrp vsmsrp 
+				from (
+					select distinct p.car_name vid,to_char(p.msrp_adjust_date, 'YYYYMM') yearmonth
+                       ,first_value(p.new_msrp * 10000) over(partition by p.car_name order by p.msrp_adjust_date desc) msrp
+				       from cims_direction_price_auto_view p
+				       where p.car_name in($vid$) and to_char(p.msrp_adjust_date, 'YYYY-MM') = '$beginDate$' 
+				       and p.direction_price is not null
+				)d
+				left join (
+					select distinct p.car_name vid
+                       ,first_value(p.new_msrp * 10000) over(partition by p.car_name order by p.msrp_adjust_date desc) msrp
+				       from cims_direction_price_auto_view p
+				       where p.car_name in($vid$) and to_char(p.msrp_adjust_date, 'YYYY-MM') = to_char(add_months(to_date('$beginDate$','YYYY-MM'),-1),'YYYY-MM') 
+				       and p.direction_price is not null
+				)s on d.vid = s.vid
+	)
+	,t3 as(
+		型号补数主表
+		<include refid="getVersionInfo"/>
+	)
+	
+	select  
+		   *
+		   from t3
+		   left join (
+		   		  select 
+		   				e.vid,e.msrp,e.tp,e.discount,e.discountrate,e.yearmonth
+		   				,to_char(e.discount-e.vsdiscount) vsdiscount
+		   				,to_char(e.discountrate-e.vsdiscountrate) vsdiscountrate
+		   				from(
+		   					  select 
+					   			   t2.msrp,t1.tp,t1.vid,t2.yearmonth
+					   			   ,to_char(t2.msrp-t1.tp) discount 折扣 
+					   			   ,to_char((t2.msrp-t1.tp)/t2.msrp*100) discountrate折扣率
+					   			   ,to_char(t2.vsmsrp-t1.vstp) vsdiscount 上月折扣 
+					   			   ,to_char((t2.vsmsrp-t1.vstp)/t2.vsmsrp*100) vsdiscountrate上月折扣率
+					   			   from t2
+					   			   left join t1 on t1.vid = t2.vid
+		   				)e
+		   )d on t3.versionid = d.vid
+		   order by t3.versionId
+</select> -->
+<select id="loadVersionDiscountRatioChartAndTable" resultClass="com.ways.app.price.model.VersionInfoEntity">
+					with t1 as
+				 (
+				 <!-- 全国均价 -->
+				 <isEqual property="citys" compareValue="0">
+				 		select d.version_id vid, round(d.price_fawvw) tp, round(s.price_fawvw) vstp
+				    from faw_vw.fdm_version_state_price d 
+				    left join faw_vw.fdm_version_state_price s
+				      on s.version_id = d.version_id
+				      and to_char(add_months(to_date(s.ym,'YYYYMM'),1),'YYYYMM') = d.ym and s.week = 7 
+				      where d.ym=replace('$beginDate$','-','') and d.week= 7 and d.version_id in ($vid$)
+				 </isEqual>
+				 <isNotEqual property="citys" compareValue="0">
+				 			select d.vid, round(d.tp) tp, round(s.tp) vstp
+				    from (select  e.vid,
+				                          case
+				                            when min(e.mix) is null then
+				                             avg(e.tp)
+				                            else
+				                             sum(e.mix) 
+				                          end tp
+				            from (select d.vid,
+				                         min(d.tp) tp,
+				                         case
+				                           when min(d.value) is not null then
+				                            to_char(min(d.tp) * ratio_to_report(sum(d.value))
+				                                    over(partition by d.vid))
+				                           else
+				                            null
+				                         end mix,
+				                         min(d.value) value
+				                    from (select p.version_id vid,
+				                                 to_char(p.price_fawvw) tp,
+				                                 p.city_id region,
+				                                 m.value
+				                            from faw_vw.fdm_version_city_price p
+				                           inner join faw_vw.fdm_car_version v
+				                              on v.version_id = p.version_id
+				                            left join faw_vw.fdm_model_city_mix m
+				                              on m.sub_model_id = v.submodel_id
+				                             and m.city_id = p.city_id
+				                             and m.year = p.year - 1
+				                           where p.ym = replace('$beginDate$','-','')
+				                             and p.version_id in ($vid$)
+				                             and p.city_id in ($citys$)
+				                             and p.Week = 7
+				                             and p.price_fawvw is not null
+				                             and p.price_fawvw != 0.00) d
+				                  
+				                   group by d.vid, d.region) e
+				                   group by e.vid
+				                   ) d
+				    left join (select  e.vid,
+				                              case
+				                                when min(e.mix) is null then
+				                                 avg(e.tp) 
+				                                else
+				                                 sum(e.mix) 
+				                              end tp
+				                from (select d.vid,
+				                             min(d.tp) tp,
+				                             case
+				                               when min(d.value) is not null then
+				                                to_char(min(d.tp) *
+				                                        ratio_to_report(sum(d.value))
+				                                        over(partition by d.vid))
+				                               else
+				                                null
+				                             end mix,
+				                             min(d.value) value
+				                        from (select p.version_id vid,
+				                                     to_char(p.price_fawvw) tp,
+				                                     p.city_id region,
+				                                     m.value
+				                                from faw_vw.fdm_version_city_price p
+				                               inner join faw_vw.fdm_car_version v
+				                                  on v.version_id = p.version_id
+				                                left join faw_vw.fdm_model_city_mix m
+				                                  on m.sub_model_id = v.submodel_id
+				                                 and m.city_id = p.city_id
+				                                 and m.year = p.year - 1
+				                               where p.ym = to_char(add_months(to_date(replace('$beginDate$','-',''),
+				                                                                       'YYYYMM'),
+				                                                               -1),
+				                                                    'YYYYMM')
+				                                 and p.version_id in ($vid$)
+				                                 and p.city_id in ($citys$)
+				                                 and p.Week = 7
+				                                 and p.price_fawvw is not null
+				                                 and p.price_fawvw != 0.00) d
+				                       group by d.vid, d.region) e
+				                       group by e.vid
+				                       ) s
+				      on s.vid = d.vid
+				 </isNotEqual>
+				 ),
+				t2 as
+				 (select d.vid, d.yearmonth, d.msrp, s.msrp vsmsrp
+				    from (select *
+				            from (select p.version_id vid,
+				                         p.ym yearmonth,
+				                         p.msrp,
+				                         row_number() over(partition by p.version_id, p.ym order by p.week desc) rn
+				                    from faw_vw.fdm_version_state_msrp p
+				                   where p.version_id in ($vid$)
+				                     and p.ym = replace('$beginDate$','-','')
+				                     and p.msrp is not null)
+				           where rn = 1) d
+				    left join (select *
+				                from (select p.version_id vid,
+				                             p.ym,
+				                             p.msrp,
+				                             row_number() over(partition by p.version_id, p.ym order by p.week desc) rn
+				                        from faw_vw.fdm_version_state_msrp p
+				                       where p.version_id in ($vid$)
+				                         and p.ym =
+				                             to_char(add_months(to_date(replace('$beginDate$','-',''), 'YYYYMM'),
+				                                                -1),
+				                                     'YYYYMM')
+				                         and p.msrp is not null)
+				               where rn = 1) s
+				      on d.vid = s.vid),
+				t3 as
+				 (select v.version_id versionid,
+				         b.submodel_name_cn || '{0}' || v.version_short_name_cn versionname,
+				         b.submodel_name_en || ' ' || v.version_short_name_en versionnameen,
+				         v.version_short_name_cn typeid,
+        				 v.version_short_name_en typeiden,
+				         v.version_code versioncode,
+				         v.year modelyear,
+				         to_char(v.launch_date, 'YYYY-MM-DD') versionLaunchDate,
+				         s.manf_name_cn manfname,
+				         s.manf_name_en manfnameen,
+				         b.submodel_name_cn submodelname,
+				         b.submodel_name_en submodelnameen,
+				         pl.emissions_name discharge,
+				         pd.trnsms_name_cn gearmode,
+				         case
+				           when v.brand_id in (6, 31) and pd.trnsms_name_en = 'DCT' then
+				            'DSG'
+				           else
+				            pd.trnsms_name_en
+				         end gearmodeen,
+				         cst.body_type_name_cn bodytype,
+				         cst.body_type_name_en bodytypeen,
+				         wg.PARENT_GRADE_NAME || ' ' || wg.GRADE_NAME_EN || '-' ||
+				         wg.SUB_GRADE_NAME gradename,
+				         wg.PARENT_GRADE_NAME || ' ' || wg.GRADE_NAME_EN || '-' ||
+				         wg.SUB_GRADE_NAME gradenameen
+				    from faw_vw.fdm_car_version v
+				   inner join /*cims_car_brandchild*/
+				  faw_vw.fdm_car_submodel b
+				      on b.submodel_id = v.submodel_id
+				   inner join /*cims_scs*/
+				  faw_vw.fdm_car_manf s
+				      on s.manf_id = v.manf_id
+				   inner join /*cims_car_pl*/
+				  faw_vw.fdm_car_emissions pl
+				      on pl.emissions_id = v.emissions_id
+				   inner join /*cims_car_pdfs*/
+				  faw_vw.fdm_car_transmission pd
+				      on pd.trnsms_id = v.trnsms_id
+				   inner join /*pms_car_hatchback*/
+				  faw_vw.fdm_faw_body_type cs
+				      on cs.submodel_id = v.submodel_id
+				   inner join faw_vw.fdm_ways_body_type cst
+				      on cst.body_type_id = cs.body_type_id
+				    left join faw_vw.v_faw_info_grade g
+				      on g.model_id = b.model_id
+				    left join faw_vw.v_faw_grade wg
+				      on wg.grade_id = g.grade_id
+				     and wg.group_id = 2
+				   where v.version_id in ($vid$))
+				select *
+				  from t3
+				  left join (select e.vid,
+				                    e.msrp,
+				                    e.tp,
+				                    e.discount,
+				                    e.discountrate,
+				                    e.yearmonth,
+				                    to_char(e.discount - e.vsdiscount) vsdiscount,
+				                    to_char(e.discountrate - e.vsdiscountrate) vsdiscountrate
+				               from (select t2.msrp,
+				                            t1.tp,
+				                            t1.vid,
+				                            t2.yearmonth,
+				                            to_char(t2.msrp - t1.tp) discount,
+				                            to_char((t2.msrp - t1.tp) / t2.msrp * 100) discountrate,
+				                            to_char(t2.vsmsrp - t1.vstp) vsdiscount,
+				                            to_char((t2.vsmsrp - t1.vstp) / t2.vsmsrp * 100) vsdiscountrate
+				                       from t2
+				                       left join t1
+				                         on t1.vid = t2.vid) e) d
+				    on t3.versionid = d.vid
+				 order by t3.versionId
+</select>
+
+</sqlMap>

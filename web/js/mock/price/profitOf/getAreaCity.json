@@ -1,0 +1,50 @@
+[{
+	"areaId": "1",
+	"areaName": "华东地区",
+	"citys": [{
+		"cityId": "107",
+		"cityName": "嘉兴市"
+	},
+	{
+		"cityId": "131",
+		"cityName": "淮安市"
+	},
+	{
+		"cityId": "154",
+		"cityName": "南通市"
+	},
+	{
+		"cityId": "158",
+		"cityName": "新余市"
+	},
+	{
+		"cityId": "175",
+		"cityName": "台州市"
+	}]
+},
+{
+	"areaId": "2",
+	"areaName": "华南地区",
+	"citys": [{
+		"cityId": "128",
+		"cityName": "文昌市"
+	},
+	{
+		"cityId": "65",
+		"cityName": "河源市"
+	},
+	{
+		"cityId": "70",
+		"cityName": "玉林市"
+	},
+	{
+		"cityId": "80",
+		"cityName": "江门市"
+	},
+	{
+		"cityId": "87",
+		"cityName": "中山市"
+	}]
+}
+
+]

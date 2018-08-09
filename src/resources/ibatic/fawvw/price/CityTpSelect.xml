@@ -1,0 +1,989 @@
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTD SQL Map 2.0//EN" "http://ibatis.apache.org/dtd/sql-map-2.dtd" >
+<sqlMap namespace="cityTpSelect">
+<!-- 初始化时间，从用户购买数据表取 -->
+<select id="initDate" resultClass="java.util.HashMap">
+  with t1 as(
+	   Select Enddate,Begindate
+			  From (Select Max(p.Ym) Enddate   From Sub_Version_Price_Date p),
+		       (Select Min(p.Ym) Begindate From Sub_Version_Price_Date p)
+	)
+	 select 
+	 	   <![CDATA[
+	       case when g.sdate < t1.begindate 
+	       		then to_char(to_date(t1.begindate,'YYYY-MM'),'YYYY-MM') 
+	       else to_char(to_date(substr(g.sdate,0,6),'YYYY-MM'),'YYYY-MM') 
+	        end begindate ,
+	       case when g.edate > t1.enddate then to_char(to_date(t1.enddate,'YYYY-MM'),'YYYY-MM') 
+	       else to_char(to_date(substr(g.edate,0,6),'YYYY-MM'),'YYYY-MM') 
+	        end enddate
+	       ]]>
+	       from Fdm_User_Purchaser_Module_Date g 
+	       full join t1 on 1=1
+	       where g.group_id=$userId$ 
+				 and g.Module='transprice'
+</select>
+
+<!-- 获取车身形式 -->
+<select id="getBodyType" resultClass="com.ways.app.price.model.BodyType">
+    Select Distinct w.Body_Type_Id Bodytypeid, w.Body_Type_Name_Cn Bodytypename
+	  From Fdm_Faw_Body_Type f
+	 Inner Join Fdm_Ways_Body_Type w On f.Body_Type_Id = w.Body_Type_Id
+</select>
+
+<!-- 根据条件获取有效车型公共SQL -->
+<sql id="getSubModel">
+     <!--终端支持分析车型过滤 -->
+  <![CDATA[
+	 Select Distinct p.submodel_id Submodelid
+       From v_faw_info_grade o
+   Inner Join v_faw_grade Gr On 
+      o.GRADE_ID = gr.GRADE_ID
+     Inner Join Fdm_Car_Submodel p On o.Model_Id = p.Model_Id
+     Inner Join Fdm_Car_Brand y On p.Brand_Id = y.Brand_Id
+     Inner Join fdm_car_orig orig On y.orig_id = orig.orig_id
+     Inner Join Fdm_Car_Manf u On p.Manf_Id = u.Manf_Id
+     Inner Join Fdm_Car_Port_Type Cci On u.Port_Type_Id = Cci.Port_Type_Id
+     Inner Join Fdm_Car_Version n On p.Submodel_Id = n.Submodel_Id
+     Inner Join Fdm_Faw_Body_Type t On p.submodel_id = t.submodel_id
+	Where  n.launch_date <= last_day(to_date('$endDate$', 'yyyy-mm'))
+	    and (n.halt_no_sale_date is null or n.halt_no_sale_date > to_date('$beginDate$-01', 'yyyy-mm-dd'))                            
+  ]]>
+    <isNotEmpty property="bodyTypeId">
+   		<!-- 车身形式过滤条件 -->
+   		<isNotEqual property="bodyTypeId" compareValue="0">
+    		And t.body_type_id in($bodyTypeId$)
+   		</isNotEqual>
+    </isNotEmpty>
+</sql>
+
+<!-- 获取本品子车型和其竟品车型 -->
+<resultMap class="com.ways.app.price.model.BPSubModel" id="getSubmodelByBpGroup1" groupBy="subModelId">
+	<result property="subModelId" column="subModelBpId" nullValue="" />
+	<result property="subModelName" column="subModelName" nullValue="" />
+	<result property="pooAttributeId" column="bp_car_in" nullValue="" />
+	<result property="jpSubModelList" resultMap="cityTpSelect.getSubmodelByBpGroup2" />
+</resultMap> 
+<resultMap class="com.ways.app.price.model.SubModel" id="getSubmodelByBpGroup2">
+	<result property="subModelId" column="subModelJpId" nullValue="" />
+	<result property="subModelName" column="subModelJpName" nullValue="" />
+	<result property="pooAttributeId" column="jp_car_in" nullValue="" />
+</resultMap>
+<select id="getSubmodelByBp" resultMap="getSubmodelByBpGroup1">
+
+	with t1 as(
+		<include refid="getSubModel"/>
+	)
+	Select b.Bp_Model_Id             Submodelbpid,
+	       c.submodel_name_cn        Submodelname,
+	       g.parent_grade_id            Bp_Car_In,
+	       b.jp_model_id             Submodeljpid,
+	       j.submodel_name_cn        Submodeljpname,
+	       g.parent_grade_id          Jp_Car_In
+	 From Fdm_Car_Bp_Jp b
+	 Inner Join Fdm_Car_Submodel c    On c.Submodel_Id = b.Bp_Model_Id
+	 Inner Join v_faw_info_grade ig   On ig.model_id = c.model_id
+     Inner Join v_faw_grade g         On ig.grade_id = g.grade_id
+	 Inner Join Fdm_Car_Manf s        On s.Manf_Id = b.Bp_Manf_Id
+	 Left  Join Fdm_Car_Submodel j    On j.Submodel_Id = b.Jp_Model_Id
+	 Left  Join Fdm_Car_Manf Js       On Js.Manf_Id = b.Jp_Manf_Id
+	 Where b.Group_Id = $userId$
+	   And Exists (Select 1 From T1 Where T1.Submodelid = b.Bp_Model_Id)
+	   And Exists (Select 1 From T1 Where T1.Submodelid = b.Jp_Model_Id)
+	 Order By b.bp_model_sort asc
+
+</select>
+
+<!-- 获取细分市场下子车型关系 --> 
+<resultMap class="com.ways.app.price.model.Segment" id="getSubmodelBySegmentGroup1" groupBy="segmentId">
+	<result property="segmentId" column="parent_id" nullValue="" />
+	<result property="segmentName" column="parent_grade_name_cn" nullValue="" />
+	<result property="segmentList" resultMap="cityTpSelect.getSubmodelBySegmentGroup2" />
+</resultMap> 
+<resultMap class="com.ways.app.price.model.Segment" id="getSubmodelBySegmentGroup2" groupBy="segmentId">
+	<result property="segmentId" column="grade_id" nullValue="" />
+	<result property="segmentName" column="grade_name_cn" nullValue="" />
+	<result property="subModelList" resultMap="cityTpSelect.getSubmodelBySegmentGroup3" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.SubModel" id="getSubmodelBySegmentGroup3">
+	<result property="subModelId" column="submodelid" nullValue="" />
+	<result property="subModelName" column="submodelname" nullValue="" />
+	<result property="pooAttributeId" column="car_in" nullValue="" />
+</resultMap>
+<sql id="getUserGroupGradeSubModel">
+	with t1 as(
+		select d.*
+			  from (Select Distinct  g.GRADE_NAME_EN||'-'||g.sub_grade_name Grade_Id,
+                          g.GRADE_NAME_EN parent_grade_name_cn,
+                          g.sub_grade_name,
+                          g.parent_grade_name,
+                          g.GRADE_NAME_EN parent_id,
+                          g.grade_order,
+                          g.GRADE_NAME_EN||'-'||g.sub_grade_name Grade_Name_Cn,
+                          c.Submodel_Id Submodelid,
+                          c.Submodel_Name_Cn Submodelname,
+                            g.parent_grade_id Car_In,
+					                s.Manf_Id Manfid,
+					                s.Manf_Name_Cn Manfname,
+					                p.Brand_Id Brandid,
+					                p.Brand_Name_Cn Brandname,
+					                Upper(Getletter(Substr(p.Brand_Name_Cn, 0, 1))) Brandletter,
+					                Upper(Getletter(Substr(s.Manf_Name_Cn, 0, 1))) Manfletter
+					 From v_faw_grade g
+           Inner Join v_faw_info_grade i
+              On g.GRADE_ID = i.grade_id
+					 Inner Join Fdm_Car_Model b    On b.Model_Id = i.Model_Id
+					 Inner Join Fdm_Car_Submodel c On c.Model_Id = b.Model_Id
+					 Inner Join Fdm_Car_Manf s     On s.Manf_Id = c.Manf_Id
+					 Inner Join Fdm_Car_Brand p    On p.Brand_Id = c.Brand_Id
+					 Where g.Group_Id = $userId$
+			  ) d
+			 ,(
+			 		<include refid="getSubModel"/>
+			  ) c 
+			  Where c.Submodelid = d.Submodelid
+	)
+</sql>
+<select id="getSubmodelBySegment" resultMap="getSubmodelBySegmentGroup1">
+	<include refid="getUserGroupGradeSubModel"/>
+	<!-- select d.*,g.Segment_Name_Cn parent_grade_name_cn
+	       	from t1 d ,Fdm_Segment g 
+	       	where g.Segment_Id(+) = d.parent_id
+	        order by g.Segment_Sort -->
+	        select d.* from t1 d order by d.grade_order
+</select>
+
+<!-- 获取品牌下子车型关系 -->
+<resultMap class="com.ways.app.price.model.LetterObj" id="getSubmodelByBrandGroup1" groupBy="letter">
+	<result property="letter" column="brandletter" nullValue="" />
+	<result property="objList" resultMap="cityTpSelect.getSubmodelByBrandGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.Brand" id="getSubmodelByBrandGroup2" groupBy="brandId">
+	<result property="brandId" column="brandid" nullValue="" />
+	<result property="brandName" column="brandname" nullValue="" />
+	<result property="subModelList" resultMap="cityTpSelect.getSubmodelByBrandGroup3" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.SubModel" id="getSubmodelByBrandGroup3">
+	<result property="subModelId" column="submodelid" nullValue="" />
+	<result property="subModelName" column="submodelname" nullValue="" />
+	<result property="pooAttributeId" column="car_in" nullValue="" />
+</resultMap>
+<select id="getSubmodelByBrand" resultMap="getSubmodelByBrandGroup1">
+
+	<include refid="getUserGroupGradeSubModel"/>			
+	select * from t1 order by t1.brandletter,t1.brandId,t1.submodelid
+</select>
+
+<!-- 获取厂商 下子车型关系 -->
+<resultMap class="com.ways.app.price.model.LetterObj" id="getSubmodelByManfGroup1" groupBy="letter">
+	<result property="letter" column="manfletter" nullValue="" />
+	<result property="objList" resultMap="cityTpSelect.getSubmodelByManfGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.Manf" id="getSubmodelByManfGroup2" groupBy="manfId">
+	<result property="manfId" column="manfid" nullValue="" />
+	<result property="manfName" column="manfname" nullValue="" />
+	<result property="subModelList" resultMap="cityTpSelect.getSubmodelByManfGroup3" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.SubModel" id="getSubmodelByManfGroup3">
+	<result property="subModelId" column="submodelid" nullValue="" />
+	<result property="subModelName" column="submodelname" nullValue="" />
+	<result property="pooAttributeId" column="car_in" nullValue="" />
+</resultMap>
+<select id="getSubmodelByManf" resultMap="getSubmodelByManfGroup1">
+
+	<include refid="getUserGroupGradeSubModel"/>		
+	select * from t1 order by t1.manfletter,t1.manfid,t1.submodelid
+</select>
+
+<!-- 常用对象型号组 -->
+<resultMap class="com.ways.app.price.model.AutoCustomGroup" id="getAutoCustomGroup1" groupBy="modelID">
+	<result property="modelID" column="modelID" nullValue=""/>
+	<result property="modelName" column="modelName" nullValue=""/>
+	<result property="modelEName" column="modelEName" nullValue=""/>
+	<result property="objectGroupList" resultMap="cityTpSelect.getAutoCustomGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.ObjectGroup" id="getAutoCustomGroup2" groupBy="objectGroupID">
+	<result property="objectGroupID" column="objectGroupID" nullValue=""/>
+	<result property="objectGroup" column="objectGroup" nullValue=""/>
+	<result property="versionList" resultMap="cityTpSelect.getAutoCustomGroup3" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.Version" id="getAutoCustomGroup3">
+	<result property="versionId" column="versionId" nullValue=""/>
+	<result property="versionName" column="versionName" nullValue=""/>
+	<result property="letter" column="Versioinsort" nullValue=""/>
+	<result property="mix" column="mix" nullValue="-"/>
+	<result property="msrp" column="msrp" nullValue="-"/>
+</resultMap>
+<select id="getAutoCustomGroup" resultMap="getAutoCustomGroup1">
+	With Msrpdata As(
+			Select *
+			    From (Select a.Version_Id,
+			                 a.Msrp,
+			                 a.Ym,
+			                 a.Week,
+			                 Row_Number() Over(Partition By a.Version_Id Order By a.Ym Desc, a.Week Desc) Rn
+			            From Fdm_Version_State_Msrp a
+			           Inner Join Fdm_Custom_Group_Version v
+			              On a.Version_Id = v.Version_Id
+			           Where a.Week Not In (6, 7))
+			   Where Rn = 1
+		)
+		,Mixdata As (
+			Select *
+			    From (Select m.Version_Id,
+			                 To_Char(m.Percent * 100, 'fm99999990.00') Mix,
+			                 m.Year || Lpad(m.Month, 2, 0) Yearmonth,
+			                 Row_Number() Over(Partition By m.Version_Id Order By m.Year || Lpad(m.Month, 2, 0) Desc) Mixrn
+			            From Fdm_Mix_Version m
+			           Inner Join Fdm_Custom_Group_Version v
+			              On m.Version_Id = v.Version_Id)
+			   Where Mixrn = 1
+		)
+		Select b.Submodel_Id               As Modelid,
+		       b.Submodel_Name_Cn          As Modelname,
+		       b.Submodel_Name_En          As Modelename,
+		       o.Custom_Group_Id           As Objectgroupid,
+		       o.Custom_Group_Name         As Objectgroup,
+		       o.Custom_Group_Sort         As Objectsort,
+		       n.Version_id           	   As Versionid,
+		       n.Version_Name_Cn           As Versionname,
+		       v.Custom_Group_Version_Sort As Versioinsort,
+		       m.Msrp,
+		       Mi.Mix
+		  From Fdm_Custom_Group_Version v
+		 Inner Join Fdm_Car_Version n  On n.Version_Id = v.Version_Id
+		 Inner Join Fdm_Custom_Group o On v.Custom_Group_Id = o.Custom_Group_Id
+		 Inner Join Fdm_Car_Submodel b On o.Bp_Model_Id = b.Submodel_Id
+		 Left Join Msrpdata m 		   On n.Version_Id = m.Version_Id
+		 Left Join Mixdata Mi 		   On n.Version_Id = Mi.Version_Id
+		 Order By Objectsort, Versioinsort
+</select>
+
+<!-- 获取型号成交价数据 -->
+<select id="getVersionTpData" resultClass="java.util.HashMap" remapResults="true">
+with s1 as
+ (
+   select sm.version_id, sm.msrp, sm.ym msrpTime, sm.week
+    from fdm_version_state_msrp sm
+   where sm.version_id in (
+  <isNotEmpty property="subModelIds">
+   	<!-- 车型过滤条件 -->
+    select version_id from fdm_car_version where submodel_id in($subModelIds$)
+    </isNotEmpty>
+    <isNotEmpty property="versionIds">
+   	<!-- 型号过滤条件 -->
+      $versionIds$
+    </isNotEmpty>
+    )
+    <isEqual property="frequencyType" compareValue="1">
+     and sm.week in ('1', '2', '3', '4', '5')
+    </isEqual>
+    <isEqual property="frequencyType" compareValue="2">
+     and sm.week in ('6', '7')
+    </isEqual>
+    <isEqual property="frequencyType" compareValue="3">
+     and sm.week = '7'
+    </isEqual>
+    <isEqual property="frequencyType" compareValue="4">
+     and sm.month in (3, 6, 9, 12)
+     and sm.week = '7'
+    </isEqual>
+    <isEqual property="frequencyType" compareValue="5">
+     and sm.month = 12
+     and sm.week = '7'
+    </isEqual>        
+ ),
+s2 as
+ (
+ <!-- 周 -->
+ <isEqual property="frequencyType" compareValue="1">
+   select a.version_id, 
+          a.ym price_time,
+          a.week,
+          '第' || a.week || '周' batch,
+          'Week ' || a.week batchEn, 
+          b.city_name cityName,
+          b.csort citySort,
+          a.price_fawvw TP
+         <isEqual property="multiple" compareValue="1">
+          , m.value / decode(sum(
+         case when a.price_fawvw is null then null
+           else m.value end) over(partition by a.ym, a.version_id, a.week), 0, null, sum(
+         case when a.price_fawvw is null then null
+           else m.value end) over(partition by a.ym, a.version_id, a.week)) mix,
+          a.remarks promotions
+         </isEqual>
+    from fdm_version_city_price a
+   inner join v_user_purchaser_city b
+      on a.city_id = b.city_id
+      and a.year = b.year
+   left join fdm_car_version v
+      on a.version_id = v.version_id
+   left join fdm_model_city_mix m
+      on v.submodel_id = m.sub_model_id 
+        and a.year = m.year + 1 
+        and m.city_id = a.city_id
+   where a.ym between replace('$beginDate$', '-', '') and replace('$endDate$', '-', '')
+     and a.week in('1', '2', '3', '4', '5')
+     and b.city_id in ($citys$)
+     and a.version_id in(
+    <isNotEmpty property="subModelIds">
+   	<!-- 车型过滤条件 -->
+    select version_id from fdm_car_version where submodel_id in($subModelIds$)
+    </isNotEmpty>
+    <isNotEmpty property="versionIds">
+   	<!-- 型号过滤条件 -->
+      $versionIds$
+    </isNotEmpty>
+    )
+ </isEqual>
+ 
+ <!-- 半月 -->
+ <isEqual property="frequencyType" compareValue="2">
+ select a.version_id, 
+        a.ym price_time,
+        a.week,
+        case when a.week = '6' then '上半月'
+          else '下半月' end batch, 
+        case when a.week = '6' then 'First Half Of The Month'
+          else 'Second Half Of The Month' end batchEn, 
+        b.city_name cityName,
+        b.csort citySort,
+        a.price_fawvw TP
+        <isEqual property="multiple" compareValue="1">
+        , m.value / decode(sum(
+         case when a.price_fawvw is null then null
+           else m.value end) over(partition by a.ym, a.version_id, a.week), 0, null, sum(
+         case when a.price_fawvw is null then null
+           else m.value end) over(partition by a.ym, a.version_id, a.week)) mix,
+          a.remarks promotions
+         </isEqual>
+    from fdm_version_city_price a
+   inner join v_user_purchaser_city b
+      on a.city_id = b.city_id
+      and a.year = b.year
+   left join fdm_car_version v
+      on a.version_id = v.version_id
+   left join fdm_model_city_mix m
+      on v.submodel_id = m.sub_model_id 
+        and a.year = m.year + 1 
+        and m.city_id = a.city_id
+   where a.ym between replace('$beginDate$', '-', '') and replace('$endDate$', '-', '')
+     and a.week in('6', '7')
+     and b.city_id in ($citys$)
+     and a.version_id in(
+    <isNotEmpty property="subModelIds">
+   	<!-- 车型过滤条件 -->
+    select version_id from fdm_car_version where submodel_id in($subModelIds$)
+    </isNotEmpty>
+    <isNotEmpty property="versionIds">
+   	<!-- 型号过滤条件 -->
+      $versionIds$
+    </isNotEmpty>
+    )
+ </isEqual>
+ 
+ <!-- 月-->
+ <isEqual property="frequencyType" compareValue="3">
+  select a.version_id, 
+         a.ym price_time,
+         '月' batch, 
+         'Month' batchEn,
+         b.city_name cityName,
+         b.csort citySort, 
+         a.price_fawvw TP
+          <isEqual property="multiple" compareValue="1">
+         , m.value / decode(sum(
+         case when a.price_fawvw is null then null
+           else m.value end) over(partition by a.ym, a.version_id), 0, null, sum(
+         case when a.price_fawvw is null then null
+           else m.value end) over(partition by a.ym, a.version_id)) mix,
+          a.remarks promotions
+         </isEqual>
+    from fdm_version_city_price a
+   inner join v_user_purchaser_city b
+      on a.city_id = b.city_id
+      and a.year = b.year
+   left join fdm_car_version v
+      on a.version_id = v.version_id
+   left join fdm_model_city_mix m
+      on v.submodel_id = m.sub_model_id 
+        and a.year = m.year + 1 
+        and m.city_id = a.city_id
+   where a.ym between replace('$beginDate$', '-', '') and replace('$endDate$', '-', '')
+     and a.week = '7'
+     and b.city_id in ($citys$)
+     and a.version_id in(
+    <isNotEmpty property="subModelIds">
+   	<!-- 车型过滤条件 -->
+    select version_id from fdm_car_version where submodel_id in($subModelIds$)
+    </isNotEmpty>
+    <isNotEmpty property="versionIds">
+   	<!-- 型号过滤条件 -->
+      $versionIds$
+    </isNotEmpty>
+    )
+ </isEqual>
+ 
+ <!-- 季度 -->
+ <isEqual property="frequencyType" compareValue="4">
+ select a.version_id,
+        a.ym price_time,
+        '第' || a.quarter || '季度' batch,
+        'Season ' || a.quarter batchEn, 
+        b.city_name cityName, 
+        b.csort citySort,
+        a.price_fawvw TP
+        <isEqual property="multiple" compareValue="1">
+        , m.value / decode(sum(
+         case when a.price_fawvw is null then null
+           else m.value end) over(partition by a.ym, a.version_id), 0, null, sum(
+         case when a.price_fawvw is null then null
+           else m.value end) over(partition by a.ym, a.version_id)) mix,
+          a.remarks promotions
+         </isEqual>
+    from fdm_version_city_price a
+   inner join v_user_purchaser_city b
+      on a.city_id = b.city_id
+      and a.year = b.year
+   left join fdm_car_version v
+      on a.version_id = v.version_id
+   left join fdm_model_city_mix m
+      on v.submodel_id = m.sub_model_id 
+        and a.year = m.year + 1 
+        and m.city_id = a.city_id
+   where a.ym between replace('$beginDate$', '-', '') and replace('$endDate$', '-', '')
+     and a.month in (3, 6, 9, 12)
+     and a.week = '7'
+     and b.city_id in ($citys$)
+     and a.version_id in(
+    <isNotEmpty property="subModelIds">
+   	<!-- 车型过滤条件 -->
+    select version_id from fdm_car_version where submodel_id in($subModelIds$)
+    </isNotEmpty>
+    <isNotEmpty property="versionIds">
+   	<!-- 型号过滤条件 -->
+      $versionIds$
+    </isNotEmpty>
+    )
+ </isEqual>
+ 
+ <!-- 年 -->
+ <isEqual property="frequencyType" compareValue="5">
+  select a.version_id,
+         a.ym price_time,
+         '年' batch, 
+         'Year' batchEn,
+         b.city_name cityName,
+         b.csort citySort,
+         a.price_fawvw TP
+        <isEqual property="multiple" compareValue="1">
+         , m.value / decode(sum(
+         case when a.price_fawvw is null then null
+           else m.value end) over(partition by a.ym, a.version_id), 0, null, sum(
+         case when a.price_fawvw is null then null
+           else m.value end) over(partition by a.ym, a.version_id)) mix,
+          a.remarks promotions
+         </isEqual>
+    from fdm_version_city_price a
+   inner join v_user_purchaser_city b
+      on a.city_id = b.city_id
+      and a.year = b.year
+   left join fdm_car_version v
+      on a.version_id = v.version_id
+   left join fdm_model_city_mix m
+      on v.submodel_id = m.sub_model_id 
+        and a.year = m.year + 1 
+        and m.city_id = a.city_id
+   where a.ym between replace('$beginDate$', '-', '') and replace('$endDate$', '-', '')
+     and a.month = 12
+     and a.week = '7'
+     and b.city_id in ($citys$)
+     and a.version_id in(
+    <isNotEmpty property="subModelIds">
+   	<!-- 车型过滤条件 -->
+    select version_id from fdm_car_version where submodel_id in($subModelIds$)
+    </isNotEmpty>
+    <isNotEmpty property="versionIds">
+   	<!-- 型号过滤条件 -->
+      $versionIds$
+    </isNotEmpty>
+    )
+ </isEqual>
+ )
+<isEqual property="countryAvg" compareValue="1">
+, s3 as
+   (select sp.version_id,
+           sp.ym tranDate,
+           sp.week,
+           sp.price_fawvw countryAvg
+        from fdm_version_state_price sp
+          where sp.ym between replace('$beginDate$', '-', '') and replace('$endDate$', '-', '')
+          <isEqual property="frequencyType" compareValue="1">
+           and sp.week in('1', '2', '3', '4', '5')
+          </isEqual>
+          <isEqual property="frequencyType" compareValue="2">
+           and sp.week in('6','7')
+          </isEqual>
+          <isEqual property="frequencyType" compareValue="3">
+           and sp.week = '7'
+          </isEqual>
+          <isEqual property="frequencyType" compareValue="4">
+           and sp.month in (3, 6, 9, 12)
+           and sp.week = '7'
+          </isEqual>
+          <isEqual property="frequencyType" compareValue="5">
+           and sp.month = 12
+           and sp.week = '7'
+          </isEqual>
+                and sp.version_id in (
+                <isNotEmpty property="versionIds">
+                $versionIds$
+                </isNotEmpty>
+                <isNotEmpty property="subModelIds">
+                select version_id from fdm_car_version where submodel_id in($subModelIds$)
+                </isNotEmpty>
+                )
+   )
+</isEqual>
+<isEqual property="multiple" compareValue="1">
+, s4 as(
+     select s2.version_id, s2.price_time, 
+       <isEqual property="frequencyType" compareValue="1">
+        s2.week,
+        </isEqual>
+        <isEqual property="frequencyType" compareValue="2">
+        s2.week,
+        </isEqual>
+        avg(s2.TP) AmtAvg, 
+        nvl(round(sum(s2.TP * s2.mix), 0),avg(s2.TP)) mixAvg 
+        from s2 group by s2.version_id, s2.price_time
+        <isEqual property="frequencyType" compareValue="1">
+        , s2.week
+        </isEqual>
+        <isEqual property="frequencyType" compareValue="2">
+        , s2.week
+        </isEqual>
+   )
+</isEqual>
+select versionCode,
+       segmentName,
+       segmentNameEn,
+       segmentSort,
+       brandName,
+       brandNameEn,
+       manfName,
+       manfNameEn,
+       subModelName,
+       subModelNameEn,
+       engineCapacity,
+       transmissionType,
+       transmissionTypeEn,
+       versionMark,
+       versionMarkEn,
+       bodyTypeName,
+       bodyTypeNameEn,
+       launchDate,
+       year,
+       MSRP,
+       priceTime,
+       batch,
+       batchEn,
+       <isEqual property="countryAvg" compareValue="1">
+       countryAvg,
+       </isEqual>
+       <isEqual property="multiple" compareValue="1">
+       listagg(promotions, ', ') within group (order by citysort) promotions,
+       round(amtAvg, 0) amtAvg,
+       round(mixAvg, 0) mixAvg,
+       </isEqual>
+       $sumCitys$
+  from (
+  select * from ( 
+select distinct c.version_code versionCode,
+                seg.parent_grade_name||' '||seg.grade_name_en||'-'||seg.sub_grade_name segmentName,
+                seg.parent_grade_name||' '||seg.grade_name_en||'-'||seg.sub_grade_name segmentNameEn,
+                seg.GRADE_ORDER segmentSort,
+                brand.brand_name_cn brandName,
+                brand.brand_name_en brandNameEn,
+                manf.manf_name_cn manfName,
+                manf.manf_name_en manfNameEn,
+                submodel.submodel_name_cn subModelName,
+                submodel.submodel_name_en subModelNameEn,
+                em.emissions_name engineCapacity,
+                tm.trnsms_name_cn transmissionType,
+                tm.trnsms_name_en transmissionTypeEn,
+                c.version_short_name_cn versionMark,
+                c.version_short_name_en versionMarkEn,
+                wbt.body_type_name_cn bodyTypeName,
+                wbt.body_type_name_en bodyTypeNameEn,
+                to_char(c.launch_date, 'yyyy-mm-dd') launchDate,
+                c.year year,
+                s1.msrp MSRP,
+                <isEqual property="frequencyType" compareValue="5">
+                substr(s2.price_time, 0, 4) priceTime,
+                </isEqual>
+                <isNotEqual property="frequencyType" compareValue="5">
+                s2.price_time priceTime,
+                </isNotEqual>
+                s2.cityName cityName,
+                s2.citySort citySort,
+                s2.tp TP,
+                s2.batch batch,
+                s2.batchEn batchEn
+                <isEqual property="countryAvg" compareValue="1">
+                , s3.countryAvg countryAvg
+                </isEqual>
+                <isEqual property="multiple" compareValue="1">
+                , s2.cityName || '：' || s2.promotions promotions,
+                  s4.AmtAvg,
+                  s4.mixAvg
+                </isEqual>
+  from fdm_car_version c
+ inner join s1
+    on c.version_id = s1.version_id
+ inner join s2
+    on c.version_id = s2.version_id
+   and s1.msrpTime = s2.price_time
+    <isEqual property="frequencyType" compareValue="1">
+     and s1.week = s2.week
+    </isEqual>
+    <isEqual property="frequencyType" compareValue="2">
+     and s1.week = s2.week
+    </isEqual>
+ <isEqual property="countryAvg" compareValue="1">
+ left join S3
+    on c.version_id = s3.version_id and s2.price_time = s3.tranDate 
+    <isEqual property="frequencyType" compareValue="1">
+     and s3.week = s2.week
+    </isEqual>
+    <isEqual property="frequencyType" compareValue="2">
+     and s3.week = s2.week
+    </isEqual>
+ </isEqual>
+ <![CDATA[
+ inner join fdm_car_submodel submodel
+    on c.submodel_id = submodel.submodel_id
+ inner join fdm_car_brand brand
+    on brand.brand_id = c.brand_id
+ inner join fdm_car_manf manf
+    on submodel.manf_id = manf.manf_id
+ inner join fdm_car_transmission tm
+    on c.trnsms_id = tm.trnsms_id
+ inner join fdm_car_emissions em
+    on c.emissions_id = em.emissions_id
+  inner join v_faw_info_grade vsm
+    on vsm.model_id = submodel.model_id
+ inner join v_faw_grade seg
+    on seg.GRADE_ID = vsm.grade_id
+ inner join fdm_faw_body_type bt
+    on bt.submodel_id = submodel.submodel_id
+   and seg.group_id = bt.group_id
+ inner join fdm_ways_body_type wbt
+    on wbt.body_type_id = bt.body_type_id
+]]>
+<isEqual property="multiple" compareValue="1">
+ , s4
+</isEqual>
+<![CDATA[
+ where 1 = 1
+   and (to_char(c.halt_no_sale_date, 'yyyy-mm') >= '$beginDate$' or
+       c.halt_no_sale_date is null)
+   and to_char(c.launch_date, 'yyyy-mm') <= '$endDate$'
+   and bt.group_id = 2
+]]>
+   <isEqual property="multiple" compareValue="1">
+   and s4.version_id = c.version_id
+   and s4.price_time = s2.price_time 
+   <isEqual property="frequencyType" compareValue="1">
+   and s4.week = s2.week
+   </isEqual>
+   <isEqual property="frequencyType" compareValue="2">
+   and s4.week = s2.week
+   </isEqual>
+   </isEqual>
+  <isNotEmpty property="subModelIds">
+   	<!-- 车型过滤条件 -->
+      and submodel.submodel_id in ($subModelIds$)
+  </isNotEmpty>
+  <isNotEmpty property="versionIds">
+   	<!-- 型号过滤条件 -->
+      and c.version_id in ($versionIds$)
+  </isNotEmpty>
+ order by submodelName, s2.price_time, version_short_name_cn 
+ ) t 
+  pivot
+ (
+     sum(TP)
+     for cityName
+     in ($cityNames$)
+  ))
+  group by 
+       versionCode,
+       segmentName,
+       segmentNameEn,
+       segmentSort,
+       brandName,
+       brandNameEn,
+       manfName,
+       manfNameEn,
+       subModelName,
+       subModelNameEn,
+       engineCapacity,
+       transmissionType,
+       transmissionTypeEn,
+       versionMark,
+       versionMarkEn,
+       bodyTypeName,
+       bodyTypeNameEn,
+       launchDate,
+       year,
+       MSRP,
+       priceTime,
+       batch,
+       batchEn
+       <isEqual property="countryAvg" compareValue="1">
+       , countryAvg
+       </isEqual>
+       <isEqual property="multiple" compareValue="1">
+       , amtavg,
+       mixAvg
+       </isEqual>
+       order by priceTime desc, batch desc, segmentSort, brandNameEn, manfNameEn, subModelNameEn, year desc, MSRP 
+</select>
+
+<select id="getVersionTpDataByCountryAvg" resultClass="java.util.HashMap" remapResults="true">
+with s1 as
+ (
+   select sm.version_id, sm.msrp, sm.ym msrpTime, sm.week
+    from fdm_version_state_msrp sm
+   where sm.version_id in (
+  <isNotEmpty property="subModelIds">
+   	<!-- 车型过滤条件 -->
+    select version_id from fdm_car_version where submodel_id in($subModelIds$)
+    </isNotEmpty>
+    <isNotEmpty property="versionIds">
+   	<!-- 型号过滤条件 -->
+      $versionIds$
+    </isNotEmpty>
+    )
+    <isEqual property="frequencyType" compareValue="1">
+     and sm.week in ('1', '2', '3', '4', '5')
+    </isEqual>
+    <isEqual property="frequencyType" compareValue="2">
+     and sm.week in ('6', '7')
+    </isEqual>
+    <isEqual property="frequencyType" compareValue="3">
+     and sm.week = '7'
+    </isEqual>
+    <isEqual property="frequencyType" compareValue="4">
+     and sm.month in (3, 6, 9, 12)
+     and sm.week = '7'
+    </isEqual>
+    <isEqual property="frequencyType" compareValue="5">
+     and sm.month = 12
+     and sm.week = '7'
+    </isEqual>
+ ),
+s2 as
+ (
+ <!-- 周 -->
+ <isEqual property="frequencyType" compareValue="1">
+   select a.version_id, 
+          a.ym price_time,
+          '第' || a.week || '周' batch, 
+          'Week ' || a.week batchEn,
+          a.price_fawvw countryAvg
+    from fdm_version_state_price a
+   where a.ym between replace('$beginDate$', '-', '') and replace('$endDate$', '-', '')
+     and a.week in('1', '2', '3', '4', '5')
+     and a.version_id in(
+    <isNotEmpty property="subModelIds">
+   	<!-- 车型过滤条件 -->
+    select version_id from fdm_car_version where submodel_id in($subModelIds$)
+    </isNotEmpty>
+    <isNotEmpty property="versionIds">
+   	<!-- 型号过滤条件 -->
+      $versionIds$
+    </isNotEmpty>
+    )
+ </isEqual>
+ 
+ <!-- 半月 -->
+ <isEqual property="frequencyType" compareValue="2">
+ select a.version_id, 
+        a.ym price_time,
+        case when a.week = '6' then '上半月'
+          else '下半月' end batch, 
+        case when a.week = '6' then 'First Half Of The Month'
+          else 'Second Half Of The Month' end batchEn,
+       a.price_fawvw countryAvg
+    from fdm_version_state_price a
+    where a.ym between replace('$beginDate$', '-', '') and replace('$endDate$', '-', '')
+     and a.week in('6', '7')
+     and a.version_id in(
+    <isNotEmpty property="subModelIds">
+   	<!-- 车型过滤条件 -->
+    select version_id from fdm_car_version where submodel_id in($subModelIds$)
+    </isNotEmpty>
+    <isNotEmpty property="versionIds">
+   	<!-- 型号过滤条件 -->
+      $versionIds$
+    </isNotEmpty>
+    )
+ </isEqual>
+ 
+ <!-- 月-->
+ <isEqual property="frequencyType" compareValue="3">
+  select a.version_id, 
+         a.ym price_time,
+         '月' batch, 
+         'Month' batchEn,
+         a.price_fawvw countryAvg
+    from fdm_version_state_price a
+   where a.ym between replace('$beginDate$', '-', '') and replace('$endDate$', '-', '')
+     and a.week = '7'
+     and a.version_id in(
+    <isNotEmpty property="subModelIds">
+   	<!-- 车型过滤条件 -->
+    select version_id from fdm_car_version where submodel_id in($subModelIds$)
+    </isNotEmpty>
+    <isNotEmpty property="versionIds">
+   	<!-- 型号过滤条件 -->
+      $versionIds$
+    </isNotEmpty>
+    )
+ </isEqual>
+ 
+ <!-- 季度 -->
+ <isEqual property="frequencyType" compareValue="4">
+ select a.version_id,
+        a.ym price_time,
+        '第' || a.quarter || '季度' batch, 
+        'Season ' || a.quarter batchEn,
+        a.price_fawvw countryAvg
+    from fdm_version_state_price a
+   where a.ym between replace('$beginDate$', '-', '') and replace('$endDate$', '-', '')
+     and a.month in (3, 6, 9, 12)
+     and a.week = '7'
+     and a.version_id in(
+    <isNotEmpty property="subModelIds">
+   	<!-- 车型过滤条件 -->
+    select version_id from fdm_car_version where submodel_id in($subModelIds$)
+    </isNotEmpty>
+    <isNotEmpty property="versionIds">
+   	<!-- 型号过滤条件 -->
+      $versionIds$
+    </isNotEmpty>
+    )
+ </isEqual>
+ 
+ <!-- 年 -->
+ <isEqual property="frequencyType" compareValue="5">
+  select a.version_id,
+         a.ym price_time,
+         '年' batch,
+         'Year' batchEn, 
+          a.price_fawvw countryAvg
+    from fdm_version_state_price a
+   where a.ym between replace('$beginDate$', '-', '') and replace('$endDate$', '-', '')
+     and a.month = 12
+     and a.week = '7'
+     and a.version_id in(
+    <isNotEmpty property="subModelIds">
+   	<!-- 车型过滤条件 -->
+    select version_id from fdm_car_version where submodel_id in($subModelIds$)
+    </isNotEmpty>
+    <isNotEmpty property="versionIds">
+   	<!-- 型号过滤条件 -->
+      $versionIds$
+    </isNotEmpty>
+    )
+ </isEqual>
+)
+select distinct c.version_code versionCode,
+                seg.parent_grade_name||' '||seg.grade_name_en||'-'||seg.sub_grade_name segmentName,
+                seg.parent_grade_name||' '||seg.grade_name_en||'-'||seg.sub_grade_name segmentNameEn,
+                seg.GRADE_ORDER segmentSort,
+                brand.brand_name_cn brandName,
+                brand.brand_name_en brandNameEn,
+                manf.manf_name_cn manfName,
+                manf.manf_name_en manfNameEn,
+                submodel.submodel_name_cn subModelName,
+                submodel.submodel_name_en subModelNameEn,
+                em.emissions_name engineCapacity,
+                tm.trnsms_name_cn transmissionType,
+                tm.trnsms_name_en transmissionTypeEn,
+                c.version_short_name_cn versionMark,
+                c.version_short_name_en versionMarkEn,
+                wbt.body_type_name_cn bodyTypeName,
+                wbt.body_type_name_en bodyTypeNameEn,
+                to_char(c.launch_date, 'yyyy-mm-dd') launchDate,
+                c.year year,
+                s1.msrp MSRP,
+                <isEqual property="frequencyType" compareValue="5">
+                substr(s2.price_time, 0, 4) priceTime,
+                </isEqual>
+                <isNotEqual property="frequencyType" compareValue="5">
+                s2.price_time priceTime,
+                </isNotEqual>
+                s2.batch batch,
+                s2.batchEn batchEn,
+                s2.countryAvg countryAvg
+  from fdm_car_version c
+ inner join s1
+    on c.version_id = s1.version_id
+ inner join s2
+    on c.version_id = s2.version_id
+   and s1.msrpTime = s2.price_time 
+ <![CDATA[
+ inner join fdm_car_submodel submodel
+    on c.submodel_id = submodel.submodel_id
+ inner join fdm_car_manf manf
+    on submodel.manf_id = manf.manf_id
+ inner join fdm_car_transmission tm
+    on c.trnsms_id = tm.trnsms_id
+ inner join fdm_car_emissions em
+    on c.emissions_id = em.emissions_id
+ inner join v_faw_info_grade vsm
+    on vsm.model_id = submodel.model_id
+ inner join v_faw_grade seg
+    on seg.GRADE_ID = vsm.grade_id
+ inner join fdm_car_brand brand
+    on brand.brand_id = c.brand_id
+ inner join fdm_faw_body_type bt
+    on bt.submodel_id = submodel.submodel_id
+   and seg.group_id = bt.group_id
+ inner join fdm_ways_body_type wbt
+    on wbt.body_type_id = bt.body_type_id
+ where 1 = 1
+   and (to_char(c.halt_no_sale_date, 'yyyy-mm') >= '$beginDate$' or
+       c.halt_no_sale_date is null)
+   and to_char(c.launch_date, 'yyyy-mm') <= '$endDate$'
+   and bt.group_id = 2
+]]>
+  <isNotEmpty property="subModelIds">
+   	<!-- 车型过滤条件 -->
+      and submodel.submodel_id in ($subModelIds$)
+  </isNotEmpty>
+  <isNotEmpty property="versionIds">
+   	<!-- 型号过滤条件 -->
+      and c.version_id in ($versionIds$)
+  </isNotEmpty>
+  order by priceTime desc, batch desc, segmentSort, brandNameEn, manfNameEn, subModelNameEn, year desc, MSRP 
+</select>
+
+<select id="getCityNameAndSort" resultClass="java.util.HashMap">
+  select b.city_name_cn cityName, 
+         case when upper(b.city_name_en) = 'JI NAN' then 'JINAN'
+              when upper(b.city_name_en) = 'XI AN' then 'XIAN'
+              else upper(b.city_name_en) end cityNameEn, 
+         c.csort 
+     from v_User_Purchaser_City c, fdm_city b
+   where year = to_char(sysdate, 'yyyy')  
+         and c.city_id = b.city_id
+      <isNotEmpty property="citys">
+         and c.city_id in($citys$)
+      </isNotEmpty>
+     order by c.csort
+</select>
+</sqlMap>

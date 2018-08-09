@@ -1,0 +1,853 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTD SQL Map 2.0//EN" "http://ibatis.apache.org/dtd/sql-map-2.dtd" >
+<sqlMap namespace="TerminalAnalysis">
+
+<!-- 初始化时间，从用户购买数据表取 -->
+<select id="initDate" resultClass="java.util.HashMap">
+With T1 As(
+	Select Distinct First_Value(vs.Ym) Over(Order By vs.Ym Asc) Begindate,
+      				First_Value(vs.Ym) Over(Order By vs.Ym Desc) Enddate
+    		From fdm_version_subsidy vs,fdm_version_sales_direct v 
+  	  Where vs.version_id = v.version_id And vs.ym = v.year||Lpad(v.month,2,0)
+)
+Select
+<![CDATA[
+ Case When g.Sdate < T1.Begindate
+      Then To_Char(To_Date(T1.Begindate, 'YYYY-MM'), 'YYYY-MM')
+      Else To_Char(To_Date(Substr(g.Sdate, 0, 6), 'YYYY-MM'), 'YYYY-MM')
+ End Begindate,
+ Case When g.Edate > T1.Enddate Then To_Char(To_Date(T1.Enddate, 'YYYY-MM'), 'YYYY-MM')
+      Else To_Char(To_Date(Substr(g.Edate, 0, 6), 'YYYY-MM'), 'YYYY-MM')
+      End Enddate
+]]>
+  From Fdm_User_Purchaser_Module_Date g
+  Full Join T1 On 1 = 1
+ Where g.Group_Id = $userId$
+   And g.Module = 'promotionPolicy'
+</select>
+
+<sql id="ObSelectColumn">
+	<isEqual property="objectType" compareValue="0">
+		v.Version_Id objectId,
+		b.Submodel_Name_Cn || ' ' || v.Version_Short_Name_Cn ObjectName,
+        b.Submodel_Name_En || ' ' || v.Version_Short_Name_En ObjectNameEn,
+	</isEqual>
+	<isEqual property="objectType" compareValue="1">
+		b.Submodel_Id objectId,b.Submodel_Name_Cn objectName,b.Submodel_Name_En objectNameEn,
+	</isEqual>
+	<isEqual property="objectType" compareValue="2">
+		s.id objectId,s.manf_name_cn objectName,s.manf_name_En objectNameEn,
+	</isEqual>
+	<isEqual property="objectType" compareValue="3">
+		br.Brand_Id objectId,br.Brand_Name_Cn objectName,br.Brand_Name_En objectNameEn,
+	</isEqual>
+	<isEqual property="objectType" compareValue="4">
+		<isEqual property="origIds" compareValue="'0'">
+			'1' objectId,'整体市场' objectName,'overAll Market' objectNameEn,
+		</isEqual>
+		<isNotEqual property="origIds" compareValue="'0'">
+			o.Orig_Id objectId,o.Orig_Name_Cn objectName,o.Orig_Name_En objectNameEn,
+		</isNotEqual>
+	</isEqual>
+	<isEqual property="objectType" compareValue="5">
+		wg.grade_id objectId, wg.parent_grade_name || ' ' || wg.grade_name_en || '-' || wg.sub_grade_name objectName,
+		wg.parent_grade_name || ' ' || wg.grade_name_en || '-' || wg.sub_grade_name objectNameEn,      
+	</isEqual>
+</sql>
+
+<sql id="OBWhereColumn">
+	<isEqual property="objectType" compareValue="0">
+		And v.version_id In($vids$)
+	</isEqual>	
+	<isEqual property="objectType" compareValue="1">
+		And b.submodel_id In($modelIds$)
+	</isEqual>
+	<isEqual property="objectType" compareValue="2">
+		And s.id In($manfIds$)
+	</isEqual>
+	<isEqual property="objectType" compareValue="3">
+		And br.brand_id In($brandIds$)
+	</isEqual>
+	<isEqual property="objectType" compareValue="4">
+		<isNotEqual property="origIds" compareValue="'0'">
+			And o.orig_id In($origIds$)
+		</isNotEqual>
+		<isNotEmpty property="bodyTypeIds">
+			And FS.Body_Type_Id In($bodyTypeIds$)
+		</isNotEmpty>
+	</isEqual>
+	<isEqual property="objectType" compareValue="5">
+		And wg.grade_id In($segmentIds$)
+		<isNotEmpty property="bodyTypeIds">
+			And FS.Body_Type_Id In($bodyTypeIds$)
+		</isNotEmpty>
+	</isEqual>
+</sql>
+
+<sql id="OBResultColumn">
+	<isEqual property="frequencyType" compareValue="1">
+		Select ObjectId,ObjectName,ObjectNameEn,YearMonth DateTime,Subsidy_Type_Id SubsidyTypeId,Subsidy_Type SubsidyType,To_Char(Sum(Versionsubsidy)/1000000,'fm99999999990.000') Subsidy
+			 From Version_Subsidy
+		 Group By ObjectId, ObjectName, ObjectNameEn, Subsidy_Type_Id, Subsidy_Type, YearMonth
+	</isEqual>
+	<isEqual property="frequencyType" compareValue="2">
+		Select ObjectId,ObjectName,ObjectNameEn,Quarter DateTime,Subsidy_Type_Id SubsidyTypeId,Subsidy_Type SubsidyType,To_Char(Sum(Versionsubsidy)/1000000,'fm99999999990.00') Subsidy
+			 From Version_Subsidy
+		 Group By ObjectId, ObjectName, ObjectNameEn, Subsidy_Type_Id, Subsidy_Type, Quarter
+	</isEqual>
+	<isEqual property="frequencyType" compareValue="3">
+		Select ObjectId,ObjectName,ObjectNameEn,year DateTime,Subsidy_Type_Id SubsidyTypeId,Subsidy_Type SubsidyType,To_Char(Sum(Versionsubsidy)/1000000,'fm99999999990.00') Subsidy
+			 From Version_Subsidy
+		 Group By ObjectId, ObjectName, ObjectNameEn,Subsidy_Type_Id, Subsidy_Type, year
+	</isEqual>
+</sql>
+
+<sql id="OBSortColumn">
+<isEqual property="submitType" compareValue="btnOk">
+	 <isEqual property="sort" compareValue="dateTime">
+	 	Order By DateTime, ObjectName, SubsidyTypeId
+	 </isEqual>
+	 <isEqual property="sort" compareValue="object">
+	 	Order By ObjectName, DateTime, SubsidyTypeId
+	 </isEqual>
+</isEqual>	
+<isEqual property="submitType" compareValue="changPromotion">
+	 <isEqual property="sort" compareValue="dateTime">
+	 	Order By ObjectName, SubsidyTypeId,DateTime
+	 </isEqual>
+	 <isEqual property="sort" compareValue="object">
+	 	Order By DateTime,SubsidyTypeId,ObjectName
+	 </isEqual>
+</isEqual> 
+</sql>
+<sql id="versionSubModel">
+ Base As
+ (Select distinct p.yearmonth ym,
+                  v.version_id Vid,
+                  v.parentid Pid,
+                  To_Char(v.launch_date, 'YYYYMM') listingdate,
+                  v.submodel_id Submodelid,
+                  v.manf_id manfid,
+                  v.brand_id brandid
+    From fdm_car_version v, fdm_date_main p
+   where v.submodel_id In ($modelIds$)
+     and p.yearmonth between replace('$beginDate$', '-', '') and
+         replace('$endDate$', '-', '')
+     and p.yearmonth >= to_char(v.launch_date, 'YYYYMM')
+   <![CDATA[  and (p.yearmonth <= to_char(v.halt_no_sale_date, 'YYYYMM') or
+         v.halt_no_sale_date is null)
+     and v.is_installed_flag != 1),]]>
+Full_Time1 As /*拿出各月里的最新代型号(没有下一代的型号)*/
+ (select ym, vid, pid, listingdate, submodelId, manfid, brandid
+    from (select * from base) d
+   where not Exists (select 1
+            from base s
+           where d.ym = s.ym
+             and d.vid = s.pid)),
+Full_Time2 as
+ (select distinct case
+           when (vs.version_sale is null or round(vs.version_sale) = 0) and
+              <![CDATA[  v.parentid is not null and v.parentid <> 0 and
+                f.ym >= to_char(dv.launch_date, 'YYYYMM') and
+                (f.ym <= to_char(dv.halt_no_sale_date, 'YYYYMM') or
+                dv.halt_no_sale_date is null)
+               then]]>
+            v.parentid
+           else
+            v.version_id
+         end vid,
+         f.ym,
+         f.ym yearmonth,
+         substr(f.ym, 0, 4) year,
+         to_number(substr(f.ym, 5, 6)) month
+    from Full_Time1 f
+   inner join faw_vw.fdm_car_version v
+      on v.version_id = f.vid
+      left join fdm_car_version dv
+      on dv.version_id = v.parentid
+    left join faw_vw.fdm_version_sales_direct vs
+      on vs.version_id = f.vid
+     and vs.year || lpad(vs.month, 2, 0) = f.ym)
+</sql>
+<select id = "loadTerminalData" resultClass ="com.ways.app.policy.model.TerminalObjectEntity">
+With 
+	<isEqual property="objectType" compareValue="1">
+		<include refid="versionSubModel"/>,
+	</isEqual>
+ObjectBase As(     
+     Select     
+           <include refid="ObSelectColumn"/>
+           v.Version_Id Vid,
+           v.launch_date,
+           v.halt_no_sale_date,
+           v.Version_Name_Cn VersionName,
+           v.Version_Code VersionCode,
+           v.Year ModelYear,
+           b.Submodel_Name_En || ' ' || v.Version_Short_Name_En VersionChartName,
+           To_Char(v.Launch_Date, 'YYYY-MM-DD') VersionLaunchDate,
+           v.Version_Short_Name_Cn TypeId,
+           v.Version_Short_Name_En TypeIden,
+           v.Original_Version_Id o_car_number_id,
+           v.Is_Installed_Flag,           
+           s.id ManfId,
+           s.Manf_Name_Cn ManfName,
+           s.Manf_Name_En ManfNameEn,
+           br.brand_id brandId,
+           br.brand_name_cn brandName,
+           br.brand_name_en brandNameEn,
+           o.orig_id origId,
+           o.orig_name_cn origName,
+           b.Submodel_Id Submodelid,
+           b.Submodel_Name_Cn Submodelname,
+           b.Submodel_Name_En Submodelnameen,
+           Pl.Emissions_Name Discharge,
+           Pd.Trnsms_Name_Cn Gearmode,
+           Case When v.Brand_Id In (6, 31) And Pd.Trnsms_Name_En = 'DCT' Then 'DSG' Else Pd.Trnsms_Name_En End Gearmodeen,
+           Cs.Body_Type_Name_Cn Bodytype,
+           Cs.Body_Type_Name_En Bodytypeen,
+           wg.grade_id GradeId,
+       wg.parent_grade_name||' '||wg.grade_name_en||'-'||wg.sub_grade_name Gradename,
+        wg.parent_grade_name||' '||wg.grade_name_en||'-'||wg.sub_grade_name Gradenameen,
+           Case When b.Brand_Id = 31 And b.Manf_Id = 109 Then '1' Else '0' End Isbase
+      From Fdm_Car_Version      v,
+           Fdm_Car_Submodel     b,
+           v_Car_Manf_Brand     s,
+           Fdm_Car_Brand        br,
+           Fdm_Car_Orig         o,
+           Fdm_Car_Emissions    Pl,
+           Fdm_Car_Transmission Pd,
+           Fdm_Faw_Body_Type    Fs,
+           Fdm_Ways_Body_Type   Cs,
+           v_faw_info_grade      g,
+         v_faw_grade          Wg
+     Where b.Submodel_Id = v.Submodel_Id
+       And s.Manf_Id = b.Manf_Id
+       And s.Brand_Id = b.Brand_Id
+       And b.brand_id = br.brand_id
+       And br.orig_id = o.orig_id
+       And Pl.Emissions_Id = v.Emissions_Id
+       And Pd.Trnsms_Id = v.Trnsms_Id
+       And b.Submodel_Id = Fs.Submodel_Id
+       And Fs.Body_Type_Id = Cs.Body_Type_Id      
+       And g.Model_Id = b.Model_Id
+       And wg.GRADE_ID = g.GRADE_ID
+   	   <![CDATA[
+       And (v.Halt_No_Sale_Date >= to_date('$beginDate$','yyyy/mm') or v.Halt_No_Sale_Date is Null)
+       And v.Launch_Date <= last_day(to_date('$endDate$','yyyy/mm'))
+       ]]>   
+       <include refid="OBWhereColumn"/>
+),
+full_time As(
+	<isNotEqual property="objectType" compareValue="1">
+	Select d.year,d.month,d.Yearmonth, b.Objectid,b.Vid,ft.subsidy_type_id,ft.subsidy_type
+  From Objectbase b, Fdm_Date_Main d,Fdm_Subsidy_Type ft
+ Where 1 = 1
+   And Ft.subsidy_falg = 2
+	</isNotEqual>
+	<isEqual property="objectType" compareValue="1">
+	Select d.year,
+         d.month,
+         d.Yearmonth,
+         b.Objectid,
+         b.Vid,
+         ft.subsidy_type_id,
+         ft.subsidy_type
+    From Objectbase b, full_time2 d, Fdm_Subsidy_Type ft
+   Where 1 = 1
+     And Ft.subsidy_falg = 2
+     and b.vid = d.vid
+      and d.yearmonth >= to_char(b.launch_date,'YYYYMM')
+         <![CDATA[    and (d.yearmonth <= to_char(b.halt_no_sale_date, 'YYYYMM') or]]>
+                 b.halt_no_sale_date is null)
+	</isEqual>
+   And d.Yearmonth Between replace('$beginDate$','-','') And replace('$endDate$','-','')
+),
+version_subsidy As(
+Select b.*,
+       f.Yearmonth,
+       f.year,
+       f.month,
+       to_char(to_date(f.Yearmonth,'yyyy-mm'),'yyyy-"Q"Q') quarter,
+       (To_Char(Fv.Subsidy,'fm99999999') * To_Char(Vs.Version_Sale,'fm99999999')) VersionSubsidy,
+       f.Subsidy_Type_Id,
+       f.subsidy_type,
+       To_Char(Fv.Subsidy,'fm99999999') Subsidy,
+       To_Char(Vs.Version_Sale,'fm99999999') Version_Sale      
+  From Full_Time           f,
+       Fdm_Version_Subsidy Fv,
+       Fdm_Version_Sales_direct   Vs,
+       Objectbase          b
+ Where f.Vid = b.Vid(+)
+   And f.yearmonth = fv.ym(+)
+   And f.subsidy_type_id = fv.subsidy_type_id(+)
+   And f.Vid = Fv.Version_Id(+)
+   And f.Vid = Vs.Version_Id(+)
+   And f.year = vs.year(+)
+   And f.month = vs.month(+)     
+)
+<!-- 判断是否为显示促销细分-提交按钮提交时默认为没有勾选促销细分 -->
+<isEqual property="submitType" compareValue="btnOk">
+	Select v.* From (<include refid="OBResultColumn"/>) v 
+</isEqual>
+<!-- 判断是否为显示促销细分 -->
+<isEqual property="submitType" compareValue="changPromotion">
+	 <!-- 促销细分 中显示堆积图为金额 -->
+	 <isEqual property="priceType" compareValue="1">
+	 	Select v.* From (<include refid="OBResultColumn"/>) v
+	 	  Where v.SubsidyTypeId != 5
+	 </isEqual>
+	 <!-- 促销细分 中显示堆积图为份额 -->
+	 <isEqual property="priceType" compareValue="2">
+	 	Select v.ObjectId,ObjectName,ObjectNameEn,DateTime,SubsidyTypeId,SubsidyType,
+       		   To_Char(Ratio_To_Report(Sum(v.Subsidy)) Over(Partition By v.ObjectId, v.DatetIme) * 100, 'fm99999999990.00') Subsidy
+       	From (<include refid="OBResultColumn"/>) v
+       	Where v.SubsidyTypeId != 5
+       	Group By ObjectId,ObjectName,ObjectNameEn,DateTime,SubsidyTypeId,SubsidyType
+	 </isEqual>
+</isEqual> 
+<include refid="OBSortColumn"/>
+</select>
+
+
+<resultMap class="com.ways.app.policy.model.TerminalOriginalEntity" id="exportOriginalDataGroup1" groupBy="Vid,Yearmonth">
+	<result property="Vid" column="Vid" />
+	<result property="Versionname" column="Versionname" />
+	<result property="Versionnameen" column="Versionnameen" />
+	<result property="Versioncode" column="Versioncode" />
+	<result property="Modelyear" column="Modelyear" />
+	<result property="Versionlaunchdate" column="Versionlaunchdate" />
+	<result property="Versionshortname" column="Versionshortname" />
+	<result property="Versionshortnameen" column="Versionshortnameen" />
+	<result property="Manfid" column="Manfid" />
+	<result property="Manfname" column="Manfname" />
+	<result property="Manfnameen" column="Manfnameen" />
+	<result property="Brandid" column="Brandid" />
+	<result property="Brandname" column="Brandname" />
+	<result property="Brandnameen" column="Brandnameen" />
+	<result property="Origid" column="Origid" />
+	<result property="Origname" column="Origname" />
+	<result property="Orignameen" column="Orignameen" />
+	<result property="Submodelid" column="Submodelid" />
+	<result property="Submodelname" column="Submodelname" />
+	<result property="Submodelnameen" column="Submodelnameen" />
+	<result property="Discharge" column="Discharge" />
+	<result property="Gearmode" column="Gearmode" />
+	<result property="Gearmodeen" column="Gearmodeen" />
+	<result property="Bodytype" column="Bodytype" />
+	<result property="Bodytypeen" column="Bodytypeen" />
+	<result property="Gradename" column="Gradename" />
+	<result property="Gradenameen" column="Gradenameen" />
+	<result property="Yearmonth" column="Yearmonth" />
+	<result property="Year" column="Year" />
+	<result property="Month" column="Month" />
+	<result property="Quarter" column="Quarter" />
+	<result property="pList" resultMap="TerminalAnalysis.exportOriginalDataGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.policy.model.PromotionInfo" id="exportOriginalDataGroup2">
+	<result property="Versionsubsidy" column="Versionsubsidy" />
+	<result property="SubsidyTypeId" column="SubsidyTypeId" />
+	<result property="SubsidyType" column="SubsidyType" />
+	<result property="Subsidy" column="Subsidy" />
+	<result property="VersionSale" column="VersionSale" />
+</resultMap>
+<select id = "exportOriginalData" resultMap ="exportOriginalDataGroup1">
+With 
+	<isEqual property="objectType" compareValue="1">
+		<include refid="versionSubModel"/>,
+	</isEqual>
+ObjectBase As(     
+    Select 
+    	   <include refid="ObSelectColumn"/>
+    	   v.Version_Id Vid,
+    	    v.launch_date,
+           v.Version_Name_Cn VersionName,
+           v.Version_Name_En VersionNameEn,
+           v.Version_Code VersionCode,
+           v.Year ModelYear,
+           To_Char(v.Launch_Date, 'YYYY-MM-DD') VersionLaunchDate,
+           v.Version_Short_Name_Cn VersionShortName,
+           v.Version_Short_Name_En VersionShortNameEn,
+           v.Halt_No_Sale_Date,
+           s.id ManfId,
+           s.Manf_Name_Cn ManfName,
+           s.Manf_Name_En ManfNameEn,
+           br.brand_id brandId,
+           br.brand_name_cn brandName,
+           br.brand_name_en brandNameEn,
+           o.orig_id origId,
+           o.orig_name_cn origName,
+           o.orig_name_en origNameEn,
+           b.Submodel_Id SubModelId,
+           b.Submodel_Name_Cn SubmodelName,
+           b.Submodel_Name_En SubmodelNameen,
+           Pl.Emissions_Name Discharge,
+           Pd.Trnsms_Name_Cn GearMode,
+           Case When v.Brand_Id In (6, 31) And Pd.Trnsms_Name_En = 'DCT' Then 'DSG' Else Pd.Trnsms_Name_En End GearModeEn,
+           Cs.Body_Type_Name_Cn BodyType,
+           Cs.Body_Type_Name_En BodyTypeen,
+           wg.grade_id GradeId,
+        wg.parent_grade_name||' '||wg.grade_name_en||'-'||wg.sub_grade_name Gradename,
+        wg.parent_grade_name||' '||wg.grade_name_en||'-'||wg.sub_grade_name Gradenameen
+      From Fdm_Car_Version      v,
+           Fdm_Car_Submodel     b,
+           v_Car_Manf_Brand     s,
+           Fdm_Car_Brand        br,
+           Fdm_Car_Orig         o,
+           Fdm_Car_Emissions    Pl,
+           Fdm_Car_Transmission Pd,
+           Fdm_Faw_Body_Type    Fs,
+           Fdm_Ways_Body_Type   Cs,
+          v_faw_info_grade      g,
+        v_faw_grade          Wg
+     Where b.Submodel_Id = v.Submodel_Id
+       And s.Manf_Id = b.Manf_Id
+       And s.Brand_Id = b.Brand_Id
+       And b.brand_id = br.brand_id
+       And br.orig_id = o.orig_id
+       And Pl.Emissions_Id = v.Emissions_Id
+       And Pd.Trnsms_Id = v.Trnsms_Id
+       And b.Submodel_Id = Fs.Submodel_Id
+       And Fs.Body_Type_Id = Cs.Body_Type_Id      
+       And g.Model_Id = b.Model_Id
+     And wg.GRADE_ID = g.GRADE_ID
+   	   <![CDATA[
+       And (v.Halt_No_Sale_Date >= to_date('$beginDate$','yyyy/mm') or v.Halt_No_Sale_Date is Null)
+       And v.Launch_Date <= last_day(to_date('$endDate$','yyyy/mm'))
+       ]]>   
+       <include refid="OBWhereColumn"/>
+),
+full_time As(
+	<isNotEqual property="objectType" compareValue="1">
+		Select d.year,d.month,d.Yearmonth, b.Objectid,b.Vid,ft.subsidy_type_id,ft.subsidy_type
+	  From Objectbase b, Fdm_Date_Main d,Fdm_Subsidy_Type ft
+	 Where 1 = 1
+	   And Ft.subsidy_falg = 2
+	</isNotEqual>
+	<isEqual property="objectType" compareValue="1">
+		Select d.year,
+         d.month,
+         d.Yearmonth,
+         b.Objectid,
+         b.Vid,
+         ft.subsidy_type_id,
+         ft.subsidy_type
+    From Objectbase b, full_time2 d, Fdm_Subsidy_Type ft
+   Where 1 = 1
+     And Ft.subsidy_falg = 2
+     and b.vid = d.vid
+      and d.yearmonth >= to_char(b.launch_date,'YYYYMM')
+           <![CDATA[  and (d.yearmonth <= to_char(b.halt_no_sale_date, 'YYYYMM') or]]>
+                 b.halt_no_sale_date is null)
+	</isEqual>
+   And d.Yearmonth Between replace('$beginDate$','-','') And replace('$endDate$','-','')
+),
+version_subsidy As(
+Select b.*,
+	   f.yearmonth,
+       f.year,
+       f.month,
+       to_char(to_date(f.Yearmonth,'yyyy-mm'),'yyyy-"Q"Q') quarter,
+       (To_Char(Fv.Subsidy,'fm99999999') * To_Char(Vs.Version_Sale,'fm99999999')) VersionSubsidy,
+       f.Subsidy_Type_Id SubsidyTypeId,
+       f.subsidy_type SubsidyType,
+       To_Char(Fv.Subsidy,'fm99999999') Subsidy,
+       To_Char(Vs.Version_Sale,'fm99999999') VersionSale
+  From Full_Time           f,
+       Fdm_Version_Subsidy Fv,
+       Fdm_Version_Sales_direct   Vs,
+       ObjectBase          b
+ Where f.Vid = b.Vid(+)
+   And f.yearMonth = fv.ym(+)
+   And f.subsidy_type_id = fv.subsidy_type_id(+)
+   And f.Vid = Fv.Version_Id(+)
+   And f.Vid = Vs.Version_Id(+)
+   And f.year = vs.year(+)
+   And f.month = vs.month(+)
+   <![CDATA[
+   And (b.Halt_No_Sale_Date >= To_Date(f.Yearmonth, 'yyyy/mm') Or b.Halt_No_Sale_Date Is Null)
+   ]]>
+)
+Select * From version_subsidy 
+	<isEqual property="objectType" compareValue="1">
+	<!-- Order By yearMonth,objectName,Vid,SubsidyTypeId -->
+	Order By yearMonth,Gradename,origName, ManfName,brandName,objectName, Vid, SubsidyTypeId
+	</isEqual>
+	<isEqual property="objectType" compareValue="2">
+	Order By yearMonth,Gradename,origName, objectName,SubmodelName, Vid, SubsidyTypeId
+	</isEqual>
+	<isEqual property="objectType" compareValue="3">
+	Order By yearMonth,Gradename,origName, ManfName,objectName,SubmodelName, Vid, SubsidyTypeId
+	</isEqual>
+	<isEqual property="objectType" compareValue="4">
+	Order By yearMonth,Gradename,objectName, ManfName,brandName,SubmodelName, Vid, SubsidyTypeId
+	</isEqual>
+	<isEqual property="objectType" compareValue="5">
+	Order By yearMonth,objectName,origName,ManfName,brandName,SubmodelName,Vid,SubsidyTypeId
+	</isEqual>
+	<!-- <isNotEqual property="objectType" compareValue="5">
+	Order By yearMonth,objectName,Vid,SubsidyTypeId
+	</isNotEqual> -->
+</select>
+
+<select id = "loadTerminalDataByVersion" resultClass ="com.ways.app.policy.model.TerminalObjectEntity">
+With VersionBase As(
+	Select * From (Select d.*,
+                       Row_Number() Over(Partition By d.objectId, d.Listingdate Order By d.Vid Desc) Vrn
+                  From (Select v.Version_Id Vid,
+                               v.Parentid Pid,
+                               To_Char(v.Launch_Date, 'YYYYMM') Listingdate,
+                               Connect_By_Root(v.Version_Id) objectId,
+                               v.Submodel_Id Submodelid,
+                               v.Manf_Id Scs,
+                               v.Brand_Id Pbrandid,
+                               c.Chg_Name_Cn Changname
+                          From Fdm_Car_Version v
+                         Inner Join Fdm_Car_Change c On c.Chg_Id = v.Chg_Id
+                         Where v.Is_Installed_Flag != 1
+                         	   <![CDATA[
+						       And (v.Halt_No_Sale_Date >= to_date('$beginDate$','yyyy/mm') or v.Halt_No_Sale_Date is Null)
+						       And v.Launch_Date <= last_day(to_date('$endDate$','yyyy/mm'))
+						       ]]>
+                       Connect By Prior v.Version_Id = v.Parentid Start With v.Version_Id In ($vids$)
+                        Union
+                        Select v.Version_Id Vid,
+                               v.Parentid Pid,
+                               To_Char(v.Launch_Date, 'YYYYMM') Listingdate,
+                               Connect_By_Root(v.Version_Id) objectId,
+                               v.Submodel_Id Submodelid,
+                               v.Manf_Id Scs,
+                               v.Brand_Id Pbrandid,
+                               c.Chg_Name_Cn Changname
+                          From Fdm_Car_Version v
+                         Inner Join Fdm_Car_Change c On c.Chg_Id = v.Chg_Id
+                         Where v.Is_Installed_Flag != 1
+                           	   <![CDATA[
+						       And (v.Halt_No_Sale_Date >= to_date('$beginDate$','yyyy/mm') or v.Halt_No_Sale_Date is Null)
+						       And v.Launch_Date <= last_day(to_date('$endDate$','yyyy/mm'))
+						       ]]>
+                       Connect By v.Version_Id = Prior v.Parentid Start With v.Version_Id In ($vids$)
+                       ) d
+                  ) d
+         Where d.Vrn = 1
+           And Exists (Select 1 
+                         From (Select n.Manf_Id Scs, n.Brand_Id Pbrandid
+                                 From Fdm_Car_Version n
+                                Where n.Version_Id In ($vids$)
+                             ) s
+                         Where s.Scs = d.Scs And s.Pbrandid = d.Pbrandid
+          )
+)
+,ObjectBase As(     
+     Select     
+           <include refid="ObSelectColumn"/>
+           v.Version_Id Vid,
+           v.Version_Name_Cn VersionName,
+           v.Version_Code VersionCode,
+           v.Year ModelYear,
+           b.Submodel_Name_En || ' ' || v.Version_Short_Name_En VersionChartName,
+           To_Char(v.Launch_Date, 'YYYY-MM-DD') VersionLaunchDate,
+           v.Version_Short_Name_Cn TypeId,
+           v.Version_Short_Name_En TypeIden,
+           v.Original_Version_Id o_car_number_id,
+           v.Is_Installed_Flag,           
+           s.id ManfId,
+           s.Manf_Name_Cn ManfName,
+           s.Manf_Name_En ManfNameEn,
+           br.brand_id brandId,
+           br.brand_name_cn brandName,
+           br.brand_name_en brandNameEn,
+           o.orig_id origId,
+           o.orig_name_cn origName,
+           b.Submodel_Id Submodelid,
+           b.Submodel_Name_Cn Submodelname,
+           b.Submodel_Name_En Submodelnameen,
+           Pl.Emissions_Name Discharge,
+           Pd.Trnsms_Name_Cn Gearmode,
+           Case When v.Brand_Id In (6, 31) And Pd.Trnsms_Name_En = 'DCT' Then 'DSG' Else Pd.Trnsms_Name_En End Gearmodeen,
+           Cs.Body_Type_Name_Cn Bodytype,
+           Cs.Body_Type_Name_En Bodytypeen,
+          wg.grade_id GradeId,
+        wg.parent_grade_name||' '||wg.grade_name_en||'-'||wg.sub_grade_name Gradename,
+        wg.parent_grade_name||' '||wg.grade_name_en||'-'||wg.sub_grade_name Gradenameen,
+           Case When b.Brand_Id = 31 And b.Manf_Id = 109 Then '1' Else '0' End Isbase
+      From Fdm_Car_Version      v,
+      	   VersionBase			bs,
+           Fdm_Car_Submodel     b,
+           v_Car_Manf_Brand     s,
+           Fdm_Car_Brand        br,
+           Fdm_Car_Orig         o,
+           Fdm_Car_Emissions    Pl,
+           Fdm_Car_Transmission Pd,
+           Fdm_Faw_Body_Type    Fs,
+           Fdm_Ways_Body_Type   Cs,
+          v_faw_info_grade      g,
+         v_faw_grade          Wg
+     Where v.Version_Id = bs.Vid
+       And b.Submodel_Id = v.Submodel_Id
+       And s.Manf_Id = b.Manf_Id
+       And s.Brand_Id = b.Brand_Id
+       And b.brand_id = br.brand_id
+       And br.orig_id = o.orig_id
+       And Pl.Emissions_Id = v.Emissions_Id
+       And Pd.Trnsms_Id = v.Trnsms_Id
+       And b.Submodel_Id = Fs.Submodel_Id
+       And Fs.Body_Type_Id = Cs.Body_Type_Id      
+       And g.Model_Id = b.Model_Id
+     And wg.GRADE_ID = g.GRADE_ID
+   	   <![CDATA[
+       And (v.Halt_No_Sale_Date >= to_date('$beginDate$','yyyy/mm') or v.Halt_No_Sale_Date is Null)
+       And v.Launch_Date <= last_day(to_date('$endDate$','yyyy/mm'))
+       ]]>   
+)
+,full_time As(
+	Select d.year,d.month,d.Yearmonth, b.Objectid,b.Vid,ft.subsidy_type_id,ft.subsidy_type
+	  From Objectbase b, Fdm_Date_Main d,Fdm_Subsidy_Type ft
+	 Where 1 = 1
+	   And Ft.subsidy_falg = 2
+	   And d.Yearmonth Between replace('$beginDate$','-','') And replace('$endDate$','-','')
+)
+,Subsidy As(
+	Select b.ObjectId,
+	       f.Yearmonth,
+	       f.year,
+	       f.month,
+	       to_char(to_date(f.Yearmonth,'yyyy-mm'),'yyyy-"Q"Q') quarter,
+	       f.Subsidy_Type_Id,
+	       f.subsidy_type,
+	       Sum(To_Char(Fv.Subsidy,'fm99999999')) Subsidy,
+	       Sum(To_Char(Vs.Version_Sale,'fm99999999')) Version_Sale,
+	       sum(To_Char(Vs.Version_Sale,'fm99999999') * To_Char(Fv.Subsidy,'fm99999999')) VersionSubsidy     
+	  From Full_Time           f,
+	       Fdm_Version_Subsidy Fv,
+	       Fdm_Version_Sales_direct   Vs,
+	       VersionBase         b
+	 Where f.Vid = b.Vid(+)
+	   And f.yearmonth = fv.ym(+)
+	   And f.subsidy_type_id = fv.subsidy_type_id(+)
+	   And f.Vid = Fv.Version_Id(+)
+	   And f.Vid = Vs.Version_Id(+)
+	   And f.year = vs.year(+)
+	   And f.month = vs.month(+)
+  Group By b.objectId,f.Yearmonth,f.Year,f.Month,
+           To_Char(To_Date(f.Yearmonth,'yyyy-mm'), 'yyyy-"Q"Q'),
+           f.Subsidy_Type_Id,f.Subsidy_Type   
+)
+,Version_Subsidy As(
+  Select b.*,s.YearMonth,s.Year,s.Month,s.Quarter,         
+         s.Subsidy_Type_Id,s.Subsidy_Type,s.Subsidy,
+         s.Version_Sale,VersionSubsidy
+       From Subsidy s,objectBase b
+  Where s.objectId = b.objectId(+)
+)
+<!-- 判断是否为显示促销细分-提交按钮提交时默认为没有勾选促销细分 -->
+<isEqual property="submitType" compareValue="btnOk">
+	Select v.* From (<include refid="OBResultColumn"/>) v 
+</isEqual>
+<!-- 判断是否为显示促销细分 -->
+<isEqual property="submitType" compareValue="changPromotion">
+	 <!-- 促销细分 中显示堆积图为金额 -->
+	 <isEqual property="priceType" compareValue="1">
+	 	Select v.* From (<include refid="OBResultColumn"/>) v
+	 	  Where v.SubsidyTypeId != 5
+	 </isEqual>
+	 <!-- 促销细分 中显示堆积图为份额 -->
+	 <isEqual property="priceType" compareValue="2">
+	 	Select v.ObjectId,ObjectName,ObjectNameEn,DateTime,SubsidyTypeId,SubsidyType,
+       		   To_Char(Ratio_To_Report(Sum(v.Subsidy)) Over(Partition By v.ObjectId, v.DatetIme) * 100, 'fm99999999990.00') Subsidy
+       	From (<include refid="OBResultColumn"/>) v
+       	Where v.SubsidyTypeId != 5
+       	Group By ObjectId,ObjectName,ObjectNameEn,DateTime,SubsidyTypeId,SubsidyType
+	 </isEqual>
+</isEqual> 
+<include refid="OBSortColumn"/>
+</select>
+
+
+<resultMap class="com.ways.app.policy.model.TerminalOriginalEntity" id="exportOriginalDataByVersionGroup1" groupBy="Vid,Yearmonth">
+	<result property="Vid" column="Vid" />
+	<result property="Versionname" column="Versionname" />
+	<result property="Versionnameen" column="Versionnameen" />
+	<result property="Versioncode" column="Versioncode" />
+	<result property="Modelyear" column="Modelyear" />
+	<result property="Versionlaunchdate" column="Versionlaunchdate" />
+	<result property="Versionshortname" column="Versionshortname" />
+	<result property="Versionshortnameen" column="Versionshortnameen" />
+	<result property="Manfid" column="Manfid" />
+	<result property="Manfname" column="Manfname" />
+	<result property="Manfnameen" column="Manfnameen" />
+	<result property="Brandid" column="Brandid" />
+	<result property="Brandname" column="Brandname" />
+	<result property="Brandnameen" column="Brandnameen" />
+	<result property="Origid" column="Origid" />
+	<result property="Origname" column="Origname" />
+	<result property="Orignameen" column="Orignameen" />
+	<result property="Submodelid" column="Submodelid" />
+	<result property="Submodelname" column="Submodelname" />
+	<result property="Submodelnameen" column="Submodelnameen" />
+	<result property="Discharge" column="Discharge" />
+	<result property="Gearmode" column="Gearmode" />
+	<result property="Gearmodeen" column="Gearmodeen" />
+	<result property="Bodytype" column="Bodytype" />
+	<result property="Bodytypeen" column="Bodytypeen" />
+	<result property="Gradename" column="Gradename" />
+	<result property="Gradenameen" column="Gradenameen" />
+	<result property="Yearmonth" column="Yearmonth" />
+	<result property="Year" column="Year" />
+	<result property="Month" column="Month" />
+	<result property="Quarter" column="Quarter" />
+	<result property="pList" resultMap="TerminalAnalysis.exportOriginalDataByVersionGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.policy.model.PromotionInfo" id="exportOriginalDataByVersionGroup2">
+	<result property="Versionsubsidy" column="Versionsubsidy" />
+	<result property="SubsidyTypeId" column="SubsidyTypeId" />
+	<result property="SubsidyType" column="SubsidyType" />
+	<result property="Subsidy" column="Subsidy" />
+	<result property="VersionSale" column="VersionSale" />
+</resultMap>
+<select id = "exportOriginalDataByVersion" resultMap ="exportOriginalDataByVersionGroup1">
+With VersionBase As(
+	Select * From (Select d.*,
+                       Row_Number() Over(Partition By d.objectId, d.Listingdate Order By d.Vid Desc) Vrn
+                  From (Select v.Version_Id Vid,
+                               v.Parentid Pid,
+                               To_Char(v.Launch_Date, 'YYYYMM') Listingdate,
+                               Connect_By_Root(v.Version_Id) objectId,
+                               v.Submodel_Id Submodelid,
+                               v.Manf_Id Scs,
+                               v.Brand_Id Pbrandid,
+                               c.Chg_Name_Cn Changname
+                          From Fdm_Car_Version v
+                         Inner Join Fdm_Car_Change c On c.Chg_Id = v.Chg_Id
+                         Where v.Is_Installed_Flag != 1
+                         	   <![CDATA[
+						       And (v.Halt_No_Sale_Date >= to_date('$beginDate$','yyyy/mm') or v.Halt_No_Sale_Date is Null)
+						       And v.Launch_Date <= last_day(to_date('$endDate$','yyyy/mm'))
+						       ]]>
+                       Connect By Prior v.Version_Id = v.Parentid Start With v.Version_Id In ($vids$)
+                        Union
+                        Select v.Version_Id Vid,
+                               v.Parentid Pid,
+                               To_Char(v.Launch_Date, 'YYYYMM') Listingdate,
+                               Connect_By_Root(v.Version_Id) objectId,
+                               v.Submodel_Id Submodelid,
+                               v.Manf_Id Scs,
+                               v.Brand_Id Pbrandid,
+                               c.Chg_Name_Cn Changname
+                          From Fdm_Car_Version v
+                         Inner Join Fdm_Car_Change c On c.Chg_Id = v.Chg_Id
+                         Where v.Is_Installed_Flag != 1
+                           	   <![CDATA[
+						       And (v.Halt_No_Sale_Date >= to_date('$beginDate$','yyyy/mm') or v.Halt_No_Sale_Date is Null)
+						       And v.Launch_Date <= last_day(to_date('$endDate$','yyyy/mm'))
+						       ]]>
+                       Connect By v.Version_Id = Prior v.Parentid Start With v.Version_Id In ($vids$)
+                       ) d
+                  ) d
+         Where d.Vrn = 1
+           And Exists (Select 1 
+                         From (Select n.Manf_Id Scs, n.Brand_Id Pbrandid
+                                 From Fdm_Car_Version n
+                                Where n.Version_Id In ($vids$)
+                             ) s
+                         Where s.Scs = d.Scs And s.Pbrandid = d.Pbrandid
+          )
+)
+,ObjectBase As(     
+    Select 
+    	   <include refid="ObSelectColumn"/>
+    	   v.Version_Id Vid,
+           v.Version_Name_Cn VersionName,
+           v.Version_Name_En VersionNameEn,
+           v.Version_Code VersionCode,
+           v.Year ModelYear,
+           To_Char(v.Launch_Date, 'YYYY-MM-DD') VersionLaunchDate,
+           v.Version_Short_Name_Cn VersionShortName,
+           v.Version_Short_Name_En VersionShortNameEn,
+           v.Halt_No_Sale_Date,
+           v.Launch_Date,
+           s.id ManfId,
+           s.Manf_Name_Cn ManfName,
+           s.Manf_Name_En ManfNameEn,
+           br.brand_id brandId,
+           br.brand_name_cn brandName,
+           br.brand_name_en brandNameEn,
+           o.orig_id origId,
+           o.orig_name_cn origName,
+           o.orig_name_en origNameEn,
+           b.Submodel_Id SubModelId,
+           b.Submodel_Name_Cn SubmodelName,
+           b.Submodel_Name_En SubmodelNameen,
+           Pl.Emissions_Name Discharge,
+           Pd.Trnsms_Name_Cn GearMode,
+           Case When v.Brand_Id In (6, 31) And Pd.Trnsms_Name_En = 'DCT' Then 'DSG' Else Pd.Trnsms_Name_En End GearModeEn,
+           Cs.Body_Type_Name_Cn BodyType,
+           Cs.Body_Type_Name_En BodyTypeen,
+          wg.grade_id GradeId,
+        wg.parent_grade_name||' '||wg.grade_name_en||'-'||wg.sub_grade_name Gradename,
+        wg.parent_grade_name||' '||wg.grade_name_en||'-'||wg.sub_grade_name Gradenameen
+      From Fdm_Car_Version      v,
+      	   VersionBase			bs,
+           Fdm_Car_Submodel     b,
+           v_Car_Manf_Brand     s,
+           Fdm_Car_Brand        br,
+           Fdm_Car_Orig         o,
+           Fdm_Car_Emissions    Pl,
+           Fdm_Car_Transmission Pd,
+           Fdm_Faw_Body_Type    Fs,
+           Fdm_Ways_Body_Type   Cs,
+          v_faw_info_grade      g,
+         v_faw_grade          Wg
+     Where v.Version_Id = bs.Vid
+       And b.Submodel_Id = v.Submodel_Id
+       And s.Manf_Id = b.Manf_Id
+       And s.Brand_Id = b.Brand_Id
+       And b.brand_id = br.brand_id
+       And br.orig_id = o.orig_id
+       And Pl.Emissions_Id = v.Emissions_Id
+       And Pd.Trnsms_Id = v.Trnsms_Id
+       And b.Submodel_Id = Fs.Submodel_Id
+       And Fs.Body_Type_Id = Cs.Body_Type_Id      
+       And g.Model_Id = b.Model_Id
+     And wg.GRADE_ID = g.GRADE_ID
+   	   <![CDATA[
+       And (v.Halt_No_Sale_Date >= to_date('$beginDate$','yyyy/mm') or v.Halt_No_Sale_Date is Null)
+       And v.Launch_Date <= last_day(to_date('$endDate$','yyyy/mm'))
+       ]]>   
+)
+,full_time As(
+	Select d.year,d.month,d.Yearmonth, b.Objectid,b.Vid,ft.subsidy_type_id,ft.subsidy_type
+	  From Objectbase b, Fdm_Date_Main d,Fdm_Subsidy_Type ft
+	 Where 1 = 1
+	   And Ft.subsidy_falg = 2
+	   And d.Yearmonth Between replace('$beginDate$','-','') And replace('$endDate$','-','')
+)
+,Version_Subsidy As(
+	Select b.*,
+	       f.Yearmonth,
+	       f.year,
+	       f.month,
+	       to_char(to_date(f.Yearmonth,'yyyy-mm'),'yyyy-"Q"Q') quarter,
+	       f.Subsidy_Type_Id SubsidyTypeId,
+	       f.subsidy_type SubsidyType,
+	       To_Char(Fv.Subsidy,'fm99999999') Subsidy,
+	       To_Char(Vs.Version_Sale,'fm99999999') VersionSale,
+	       To_Char(Fv.Subsidy,'fm99999999') * To_Char(Vs.Version_Sale,'fm99999999') VersionSubsidy    
+	  From Full_Time           f,
+	       Fdm_Version_Subsidy Fv,
+	       Fdm_Version_Sales_direct   Vs,
+	       ObjectBase          b
+	 Where f.Vid = b.Vid(+)
+	   And f.yearmonth = fv.ym(+)
+	   And f.subsidy_type_id = fv.subsidy_type_id(+)
+	   And f.Vid = Fv.Version_Id(+)
+	   And f.Vid = Vs.Version_Id(+)
+	   And f.year = vs.year(+)
+	   And f.month = vs.month(+)
+	   <![CDATA[
+	   And (b.Halt_No_Sale_Date >= To_Date(f.Yearmonth, 'yyyy/mm') Or b.Halt_No_Sale_Date Is Null)
+       ]]>
+)
+Select * From version_subsidy <!-- Order By yearMonth,ObjectId,Vid,SubsidyTypeId -->
+ Order By yearMonth, Gradename,origName,ManfName,brandName,SubmodelName, Vid, SubsidyTypeId
+</select>
+</sqlMap>

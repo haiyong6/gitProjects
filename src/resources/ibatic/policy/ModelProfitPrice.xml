@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTD SQL Map 2.0//EN" "http://ibatis.apache.org/dtd/sql-map-2.dtd" >
+<sqlMap namespace="modelProfitPrice">
+
+<!-- 初始化时间，从用户购买数据表取 -->
+<select id="initDate" resultClass="java.util.HashMap">
+	With Dates As(
+		Select Distinct First_Value(p.Year || Lpad(p.Month, 2, 0)) Over(Order By p.Year Asc, p.Month Asc) Begindate,
+		                First_Value(p.Year || Lpad(p.Month, 2, 0)) Over(Order By p.Year Desc, p.Month Desc) Enddate
+		    From Tb_Autoprice_Month_Rebate p,Pms_Promotion_Price m
+		    Where p.Version_Id = m.Model_Id And m.Price Is Not Null 
+		      And p.Year || Lpad(p.Month, 2, 0) = m.Sdate
+		)
+	Select <![CDATA[Case When g.Sdate < Dates.Begindate Then To_Char(To_Date(Dates.Begindate, 'YYYY-MM'), 'YYYY-MM')
+			             Else To_Char(To_Date(Substr(g.Sdate, 0, 6), 'YYYY-MM'), 'YYYY-MM')
+			        End Begindate,
+			        Case When g.Edate > Dates.Enddate Then To_Char(To_Date(Dates.Enddate, 'YYYY-MM'), 'YYYY-MM')
+			             Else To_Char(To_Date(Substr(g.Edate, 0, 6), 'YYYY-MM'), 'YYYY-MM')
+			        End Enddate]]>			        
+		  From Wias_User_Purchase_Date g
+		  Full Join Dates On 1 = 1
+		 Where g.Group_Id = $userId$
+	 	And g.Model = 'brandprofitanaly'
+</select>
+
+
+<!-- 初始化周,半月,季度下拉框 -->
+<select id="getDateUnit" resultClass="java.util.HashMap">
+	<isEqual property="frequency" compareValue="1">
+	Select (Case
+	         When To_Char(s.Price_Time, 'DD') = '08' Then
+	          '第一周'
+	         When To_Char(s.Price_Time, 'DD') = '15' Then
+	          '第二周'
+	         When To_Char(s.Price_Time, 'DD') = '22' Then
+	          '第三周'
+	         When To_Char(s.Price_Time, 'DD') = '28' Or
+	              To_Char(s.Price_Time, 'DD') = '30' Then
+	          '第四周'
+	         When To_Char(s.Price_Time, 'DD') = '03' Or
+	              To_Char(s.Price_Time, 'DD') = '31' Then
+	          '第五周'
+	       End) Text,
+		   To_Char(s.Price_Time, 'YYYY-MM-DD') Value
+	  From Sub_Transprice s
+	 Where 1 = 1
+	 <isEqual property="isEndDate" compareValue="0">
+	 And To_Char(s.Price_Time, 'YYYY-MM') = '$beginDate$'
+	 </isEqual>
+	 <isEqual property="isEndDate" compareValue="1">
+	 And To_Char(s.Price_Time, 'YYYY-MM') = '$endDate$'
+	 </isEqual>
+	 Group By Price_Time
+	 Order By Price_Time Asc
+	 </isEqual>
+	 
+	<isEqual property="frequency" compareValue="2">
+	Select (Case
+	         When To_Char(s.Price_Time, 'DD') = '15' Then
+	          '上半月'
+	         When To_Char(s.Price_Time, 'DD') = '28' Or
+	              To_Char(s.Price_Time, 'DD') = '30' Then
+	          '下半月'
+	       End) Text,
+		   To_Char(s.Price_Time, 'YYYY-MM-DD') Value
+	  From Sub_Transprice s
+	 Where 1 = 1
+	 <isEqual property="isEndDate" compareValue="0">
+	 And To_Char(s.Price_Time, 'YYYY-MM') = '$beginDate$' And To_Char(s.Price_Time, 'DD') In('15','28','30') 
+	 </isEqual>
+	 <isEqual property="isEndDate" compareValue="1">
+	 And To_Char(s.Price_Time, 'YYYY-MM') = '$endDate$' And To_Char(s.Price_Time, 'DD') In('15','28','30')
+	 </isEqual>
+	 Group By Price_Time
+	 Order By Price_Time Asc
+	 </isEqual>
+	 
+	<isEqual property="frequency" compareValue="4">
+	Select (Case
+	         When To_Char(s.Price_Time, 'MM') = '03' Then
+	          '第一季度'
+	         When To_Char(s.Price_Time, 'MM') = '06' Then
+	          '第二季度'
+	         When To_Char(s.Price_Time, 'MM') = '09' Then
+	          '第三季度'
+	         When To_Char(s.Price_Time, 'MM') = '12' Then
+	          '第四季度'
+	        End) Text,
+		   To_Char(s.Price_Time, 'YYYY-MM-DD') Value
+	  From Sub_Transprice s
+	 Where 1 = 1
+	 <isEqual property="isEndDate" compareValue="0">
+	 And To_Char(s.Price_Time, 'YYYY') = '$beginDate$' And To_Char(s.Price_Time, 'MM') In('03','06','09','12') And To_Char(s.Price_Time, 'DD') In('28','30')
+	 </isEqual>
+	 <isEqual property="isEndDate" compareValue="1">
+	 And To_Char(s.Price_Time, 'YYYY') = '$endDate$'   And To_Char(s.Price_Time, 'MM') In('03','06','09','12') And To_Char(s.Price_Time, 'DD') In('28','30')
+	 </isEqual>
+	 Group By Price_Time
+	 Order By Price_Time Asc
+	 </isEqual>
+</select>
+</sqlMap>

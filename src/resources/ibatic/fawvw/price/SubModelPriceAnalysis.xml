@@ -1,0 +1,596 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTD SQL Map 2.0//EN" "http://ibatis.apache.org/dtd/sql-map-2.dtd" >
+<sqlMap namespace="subModelPriceAnalysis">
+
+<!-- 初始化时间，从用户购买数据表取 -->
+<select id="initDate" resultClass="java.util.HashMap">
+<!-- with t1 as (
+ select min(p.ym) beginDate, max(p.ym) endDate 
+   from 
+   <isEqual property="priceType" compareValue="1">
+    fdm_version_state_msrp p 
+   </isEqual>
+   <isNotEqual property="priceType" compareValue="1">
+    fdm_version_state_price p 
+    where p.week = '7'
+   </isNotEqual>
+)
+<![CDATA[
+select case when g.sdate < t1.begindate then
+          to_char(to_date(t1.begindate, 'YYYY-MM'), 'YYYY-MM')
+         else
+          to_char(to_date(substr(g.sdate, 0, 6), 'YYYY-MM'), 'YYYY-MM')
+       end begindate,
+       case when g.edate > t1.enddate then
+          to_char(to_date(t1.enddate, 'YYYY-MM'), 'YYYY-MM')
+         else
+          to_char(to_date(substr(g.edate, 0, 6), 'YYYY-MM'), 'YYYY-MM')
+       end enddate
+]]>
+  from fdm_user_purchaser_module_date g 
+      full join t1 on 1 = 1
+    where g.group_id = 2
+      and g.module = 
+      <isEqual property="priceType" compareValue="1">
+      'brandpriceanaly_msrp'
+     'msrppriceanaly'
+      </isEqual>
+      <isEqual property="priceType" compareValue="2">
+      'brandpriceanaly'
+      </isEqual>
+      <isEqual property="priceType" compareValue="3">
+      'brandpriceanaly_msrp_tran'
+      </isEqual> -->
+   <!-- 20161208为保持跟3.0一致，此处取购买模块时间 -->  
+ <!--   select to_char(to_date(beginDate,'YYYY-MM'),'YYYY-MM') beginDate,
+             to_char(to_date(endDate,'YYYY-MM'),'YYYY-MM')  endDate
+             from (
+          select tblm.MODEL,
+   <![CDATA[    tblu.GROUP_ID,
+       case
+         when tblm.mindate > tblu.sdate then
+          tblm.mindate
+         else
+          tblu.sdate
+       end as beginDate,
+       case
+         when tblm.maxdate < tblu.edate or tblu.edate = 0 then
+          tblm.maxdate
+         else
+          tblu.edate
+       end as endDate
+  from autoways.WIAS_MODEL_DATE tblm, fdm_user_purchaser_module_date tblu
+ where tblm.model = tblu.module
+   and tblu.group_id = 2
+   and tblu.module in('msrppriceanaly')]]>
+     ) -->
+       <!-- 20170213此处更改 -->  
+       select to_char(to_date(min(p.ym),'YYYYMM'),'YYYY-MM') beginDate, 
+       to_char(to_date(max(p.ym),'YYYYMM'),'YYYY-MM') endDate 
+   from 
+   <isNotEqual property="priceType" compareValue="2">
+    fdm_version_state_msrp p 
+   </isNotEqual>
+   <isEqual property="priceType" compareValue="2">
+    fdm_version_state_price p 
+    where p.week = '7'
+   </isEqual>
+</select>
+
+<!-- 根据条件获取有效车型公共SQL -->
+<sql id="getSubModel">
+  select distinct v.submodel_id subModelId from fdm_car_version v
+     inner join fdm_faw_body_type t
+       on t.submodel_id = v.submodel_id
+       <!-- 20170214应客户需求加上价格类型和时间限制 -->
+       <isEqual property="priceType" compareValue="2">
+        inner join fdm_version_state_price p on p.version_id = v.version_id and (p.ym between  replace('$beginDate$','-','') and  replace('$endDate$','-',''))
+      	and p.week = '7'
+       </isEqual>
+       <isNotEqual property="priceType" compareValue="2">
+       inner join fdm_version_state_msrp p on p.version_id = v.version_id and (p.ym between replace('$beginDate$','-','') and replace('$endDate$','-',''))
+       </isNotEqual>
+	<isNotEmpty property="bodyTypeIds">
+   		<!-- 车身形式过滤条件 -->
+   		<isNotEqual property="bodyTypeIds" compareValue="0">
+    		where t.body_type_id in($bodyTypeIds$)
+   		</isNotEqual>
+    </isNotEmpty>
+</sql>
+
+<!-- 获取本品子车型和其竟品车型 -->
+<resultMap class="com.ways.app.price.model.BPSubModel" id="getSubmodelByBpGroup1" groupBy="subModelId">
+	<result property="subModelId" column="subModelBpId" nullValue="" />
+	<result property="subModelName" column="subModelName" nullValue="" />
+	<result property="pooAttributeId" column="bp_car_in" nullValue="" />
+	<result property="jpSubModelList" resultMap="subModelPriceAnalysis.getSubmodelByBpGroup2" />
+</resultMap> 
+<resultMap class="com.ways.app.price.model.SubModel" id="getSubmodelByBpGroup2">
+	<result property="subModelId" column="subModelJpId" nullValue="" />
+	<result property="subModelName" column="subModelJpName" nullValue="" />
+	<result property="pooAttributeId" column="jp_car_in" nullValue="" />
+</resultMap>
+<select id="getSubmodelByBp" resultMap="getSubmodelByBpGroup1">
+	with t1 as(
+		<include refid="getSubModel"/>
+	)
+	select b.bp_model_id             submodelbpid,
+         c.submodel_name_cn        submodelname,
+        g.parent_grade_id          bp_car_in,
+         b.jp_model_id             submodeljpid,
+         j.submodel_name_cn        submodeljpname,
+        g.parent_grade_id         jp_car_in
+     from fdm_car_bp_jp b
+   inner join fdm_car_submodel c    on c.submodel_id = b.bp_model_id
+   inner join v_faw_info_grade ig   on ig.model_id = c.model_id
+   inner join v_faw_grade g         on ig.grade_id = g.grade_id
+   inner join fdm_car_manf s        on s.manf_id = b.bp_manf_id
+   left  join fdm_car_submodel j    on j.submodel_id = b.jp_model_id
+   left  join fdm_car_manf js       on js.manf_id = b.jp_manf_id
+   where exists (select 1 from t1 where t1.submodelid = b.bp_model_id)
+     and exists (select 1 from t1 where t1.submodelid = b.jp_model_id)
+   order by b.bp_model_sort
+</select>
+ 
+<!-- 获取细分市场下子车型关系 --> 
+<resultMap class="com.ways.app.price.model.Segment" id="getSubmodelBySegmentGroup1" groupBy="segmentId">
+	<result property="segmentId" column="parent_id" nullValue="" />
+	<result property="segmentName" column="parent_grade_name_cn" nullValue="" />
+	<result property="segmentList" resultMap="subModelPriceAnalysis.getSubmodelBySegmentGroup2" />
+</resultMap> 
+<resultMap class="com.ways.app.price.model.Segment" id="getSubmodelBySegmentGroup2" groupBy="segmentId">
+	<result property="segmentId" column="grade_id" nullValue="" />
+	<result property="segmentName" column="grade_name_cn" nullValue="" />
+	<result property="subModelList" resultMap="subModelPriceAnalysis.getSubmodelBySegmentGroup3" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.SubModel" id="getSubmodelBySegmentGroup3">
+	<result property="subModelId" column="submodelid" nullValue="" />
+	<result property="subModelName" column="submodelname" nullValue="" />
+	<result property="pooAttributeId" column="car_in" nullValue="" />
+</resultMap>
+<sql id="getUserGroupGradeSubModel">
+	with t1 as(
+		select d.*
+			  from (Select Distinct  g.GRADE_NAME_EN||'-'||g.sub_grade_name Grade_Id,<!-- 以级别-小类名字汇总，不会重复 -->
+                          g.GRADE_NAME_EN parent_grade_name_cn,
+                          g.grade_order,
+                          g.sub_grade_name,<!-- 小类 -->
+                          g.parent_grade_name,<!-- da类 -->
+                          g.GRADE_NAME_EN parent_id,<!-- 以级别名字汇总，防止重复 -->
+                          g.GRADE_NAME_EN||'-'||g.sub_grade_name Grade_Name_Cn,
+                          c.Submodel_Id Submodelid,
+                          c.Submodel_Name_Cn||decode(v.port_type_id,'1','(进口)','') Submodelname,
+                         <!--  c.Submodel_Name_Cn Submodelname, -->
+                          g.parent_grade_id Car_In,
+		                  s.Manf_Id Manfid,
+		                  s.Manf_Name_Cn Manfname,
+		                  p.Brand_Id Brandid,
+		                  p.Brand_Name_Cn Brandname,
+		                  Upper(Getletter(Substr(p.Brand_Name_Cn, 0, 1))) Brandletter,
+		                  Upper(Getletter(Substr(s.Manf_Name_Cn, 0, 1))) Manfletter
+					   From v_faw_grade g
+                     Inner Join v_faw_info_grade i On g.grade_id = i.grade_id
+					 Inner Join Fdm_Car_Model b    On b.Model_Id = i.Model_Id
+					 Inner Join Fdm_Car_Submodel c On c.Model_Id = b.Model_Id
+					  inner join fdm_car_version v
+              on v.submodel_id = c.submodel_id
+					 Inner Join Fdm_Car_Manf s     On s.Manf_Id = c.Manf_Id
+					 Inner Join Fdm_Car_Brand p    On p.Brand_Id = c.Brand_Id
+			  ) d
+			 ,(
+			 		<include refid="getSubModel"/>
+			  ) c 
+			  Where c.Submodelid = d.Submodelid
+	)
+</sql>
+<select id="getSubmodelBySegment" resultMap="getSubmodelBySegmentGroup1">
+	<include refid="getUserGroupGradeSubModel"/>
+	        select d.*  from t1 d order by d.grade_order, length(d.Submodelname)
+</select>
+
+<!-- 获取品牌下子车型关系 -->
+<resultMap class="com.ways.app.price.model.LetterObj" id="getSubmodelByBrandGroup1" groupBy="letter">
+	<result property="letter" column="brandletter" nullValue="" />
+	<result property="objList" resultMap="subModelPriceAnalysis.getSubmodelByBrandGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.Brand" id="getSubmodelByBrandGroup2" groupBy="brandId">
+	<result property="brandId" column="brandid" nullValue="" />
+	<result property="brandName" column="brandname" nullValue="" />
+	<result property="subModelList" resultMap="subModelPriceAnalysis.getSubmodelByBrandGroup3" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.SubModel" id="getSubmodelByBrandGroup3">
+	<result property="subModelId" column="submodelid" nullValue="" />
+	<result property="subModelName" column="submodelname" nullValue="" />
+	<result property="pooAttributeId" column="car_in" nullValue="" />
+</resultMap>
+<select id="getSubmodelByBrand" resultMap="getSubmodelByBrandGroup1">
+	<include refid="getUserGroupGradeSubModel"/>			
+	select * from t1 order by t1.brandletter,t1.brandId,t1.submodelid
+</select>
+
+<!-- 获取厂商 下子车型关系 -->
+<resultMap class="com.ways.app.price.model.LetterObj" id="getSubmodelByManfGroup1" groupBy="letter">
+	<result property="letter" column="manfletter" nullValue="" />
+	<result property="objList" resultMap="subModelPriceAnalysis.getSubmodelByManfGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.Manf" id="getSubmodelByManfGroup2" groupBy="manfId">
+	<result property="manfId" column="manfid" nullValue="" />
+	<result property="manfName" column="manfname" nullValue="" />
+	<result property="subModelList" resultMap="subModelPriceAnalysis.getSubmodelByManfGroup3" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.SubModel" id="getSubmodelByManfGroup3">
+	<result property="subModelId" column="submodelid" nullValue="" />
+	<result property="subModelName" column="submodelname" nullValue="" />
+	<result property="pooAttributeId" column="car_in" nullValue="" />
+</resultMap>
+<select id="getSubmodelByManf" resultMap="getSubmodelByManfGroup1">
+	<include refid="getUserGroupGradeSubModel"/>			
+	select * from t1 order by t1.manfletter,t1.manfid,t1.submodelid
+</select>
+
+<!-- 获取车身形式 -->
+<select id="getBodyType" resultClass="com.ways.app.price.model.BodyType">
+      Select Distinct w.Body_Type_Id Bodytypeid, w.Body_Type_Name_Cn Bodytypename
+	  From Fdm_Faw_Body_Type f
+	 Inner Join Fdm_Ways_Body_Type w On f.Body_Type_Id = w.Body_Type_Id
+</select>
+
+<!-- 根据型号ID获取子集关系 -->
+<sql id="getVersionSubsetRelationship">
+Select *
+    From (Select d.*,
+                 Row_Number() Over(Partition By d.Groupid, d.Listingdate Order By d.Vid Desc) Vrn
+            From (Select v.Version_Id Vid,
+                         v.Parentid Pid,
+                         To_Char(v.Launch_Date, 'YYYYMM') Listingdate,
+                         Connect_By_Root(v.Version_Id)||v.submodel_id Groupid,
+                         v.Submodel_Id Submodelid,
+                         v.Manf_Id Scs,
+                         v.Brand_Id Pbrandid,
+                         c.Chg_Name_Cn Changname
+                    From Fdm_Car_Version v
+                   Inner Join Fdm_Car_Change c On c.Chg_Id = v.Chg_Id
+                   <!-- 型号考虑上下代关系,不考虑加装版 -->
+                   Where v.Is_Installed_Flag != 1
+                 Connect By Prior v.Version_Id = v.Parentid Start With v.subModel_id In ($subModelIds$)
+                  Union
+                  Select v.Version_Id Vid,
+                         v.Parentid Pid,
+                         To_Char(v.Launch_Date, 'YYYYMM') Listingdate,
+                         Connect_By_Root(v.Version_Id)||v.submodel_id Groupid,
+                         v.Submodel_Id Submodelid,
+                         v.Manf_Id Scs,
+                         v.Brand_Id Pbrandid,
+                         c.Chg_Name_Cn Changname
+                    From Fdm_Car_Version v
+                   Inner Join $dataUserName$Fdm_Car_Change c On c.Chg_Id = v.Chg_Id
+                   Where v.Is_Installed_Flag != 1
+                 Connect By v.Version_Id = Prior v.Parentid Start With v.subModel_id In ($subModelIds$)
+                 ) d
+            ) d
+   Where d.Vrn = 1
+     And Exists (Select 1 
+                   From (Select n.Manf_Id Scs, n.Brand_Id Pbrandid
+                           From $dataUserName$Fdm_Car_Version n
+                          Where n.subModel_id In ($subModelIds$)
+                       ) s
+                   Where s.Scs = d.Scs And s.Pbrandid = d.Pbrandid
+              )
+</sql>
+
+<!-- 获取型号信息公共SQL -->
+<sql id="getVersionInfoByObject">  
+select v.version_id vid,
+       v.version_code versionCode,
+       ba.groupid,
+       v.launch_date,
+       v.halt_product_date,
+       v.version_short_name_cn versionShortName,
+       v.version_short_name_en versionShortNameEn,
+       v.port_type_id,
+       b.submodel_id subModelId,
+       b.submodel_name_cn submodelName,
+       b.submodel_name_en submodelNameEn,
+       fg.parent_grade_name || ' ' || grade_name_en || '-' || fg.sub_grade_name gradeNameEn,
+       t.brand_name_cn brandName,
+       t.brand_name_en brandNameEn,
+       s.manf_name_cn manfName,
+       s.manf_name_en manfNameEn,
+       e.emissions_name emissionsName,
+       bt.body_type_name_en bodyTypeNameEn,
+       case
+         when v.brand_id in (6, 31) and pd.trnsms_name_en = 'DCT' then
+          'DSG'
+         else
+          pd.trnsms_name_en
+       end transMission,
+       case
+         when t.brand_id = 31 and s.manf_id = 109 then
+          '1'
+         else
+          '0'
+       end isBase,
+       bj.bp_model_sort modelSort
+    from fdm_car_version v
+   inner join fdm_car_submodel b
+      on b.submodel_id = v.submodel_id
+   inner join base ba
+      on ba.vid = v.version_id
+   inner join fdm_car_brand t
+      on t.brand_id = v.brand_id
+   inner join v_car_manf_brand s
+      on s.manf_id = v.manf_id
+     and s.brand_id = v.brand_id
+   inner join fdm_car_transmission pd
+      on pd.trnsms_id = v.trnsms_id
+   inner join fdm_car_emissions e
+      on e.emissions_id = v.emissions_id
+   inner join fdm_ways_body_type bt
+      on bt.body_type_id = v.body_type_id
+   inner join v_faw_info_grade g
+      on g.model_id = b.model_id
+   inner join v_faw_grade fg
+      on g.grade_id = fg.grade_id
+   left join fdm_car_bp_jp bj
+      on bj.bp_model_id = b.submodel_id
+	   where v.is_installed_flag = 0
+	     and b.submodel_id in ($subModelIds$)
+</sql>
+
+<resultMap class="com.ways.app.price.model.SubModelPriceAnalysis" id="getSubModelInfo" groupBy="subModelId">
+    <result property="subModelId" column="subModelId"/>
+    <result property="subModelName" column="subModelName"/>
+	<result property="subModelNameEn" column="subModelNameEn"/>
+	<result property="manfName" column="manfName" />
+	<result property="manfNameEn" column="manfNameEn" />
+	<result property="brandName" column="brandName" />
+	<result property="brandNameEn" column="brandNameEn" />
+	<result property="gradeNameEn" column="gradeNameEn" />
+	<result property="modelSort" column="modelSort" />
+	<result property="minPrice" column="minPrice" />
+	<result property="maxPrice" column="maxPrice" />
+	<result property="minMsrp" column="minMsrp" />
+	<result property="maxMsrp" column="maxMsrp" />
+	<result property="minTp" column="minTp" />
+	<result property="maxTp" column="maxTp" />
+	<result property="list" resultMap="subModelPriceAnalysis.getEntity"/>
+</resultMap>
+<resultMap class="com.ways.app.price.model.SubModelPriceAnalysisEntity" id="getEntity">
+    <result property="subModelId" column="subModelId" />
+    <result property="subModelName" column="subModelName" />
+	<result property="subModelNameEn" column="subModelNameEn" />
+	<result property="manfName" column="manfName" />
+	<result property="manfNameEn" column="manfNameEn" />
+	<result property="emissionsName" column="emissionsName" />
+	<result property="transMission" column="transMission" />
+	<result property="isBase" column="isBase" />
+	<result property="sn" column="sn" />
+	<result property="versionCode" column="versionCode" />
+	<result property="versionShortName" column="versionShortName" />
+	<result property="versionShortNameEn" column="versionShortNameEn" />
+	<result property="versionLaunchDate" column="versionLaunchDate" />
+	<result property="bodyTypeNameEn" column="bodyTypeNameEn" />
+	<result property="price" column="price" />
+	<result property="msrp" column="msrp" />
+	<result property="tp" column="tp" />
+</resultMap>
+<select id="getAnalysisData" resultMap="getSubModelInfo">
+with base as (
+   <include refid="getVersionSubsetRelationship" />
+),
+version as (
+   <include refid="getVersionInfoByObject"/>
+),
+full_time as (
+ select * from 
+(select m.yearmonth ym, v.vid, v.versionCode,
+                        v.manfName,
+                        v.manfNameEn,
+                        v.subModelId,
+                        v.subModelName,
+                        v.subModelNameEn,
+                        v.brandName,
+         				v.brandNameEn,
+         				v.gradeNameEn,
+                        v.emissionsName,
+                        v.transMission,
+                        v.versionShortName,
+                        v.versionShortNameEn,
+                        v.bodyTypeNameEn,
+                        v.launch_date versionLaunchDate,
+                        v.isBase,
+                        v.port_type_id,
+                        v.modelSort,
+                        row_number()over(partition by m.yearmonth, v.groupid order by v.launch_date desc) rn
+    from fdm_date_main m, version v
+   where m.yearmonth = '$beginDate$'
+   <![CDATA[
+     and to_char(add_months(v.launch_date, 1), 'yyyymm') <= '$beginDate$'
+     and (v.halt_product_date is null or add_months(v.halt_product_date, 1) >= last_day(to_date('$beginDate$', 'yyyymm'))))
+          where rn = 1
+   ]]>
+),
+<isNotEqual property="priceType" compareValue="3">
+price as (
+ select p.ym, 
+        t.vid, 
+        t.submodelId,
+        t.versionCode,
+        t.manfName,
+        t.manfNameEn,
+        t.subModelName,
+        t.subModelNameEn,
+        t.brandName,
+        t.brandNameEn,
+        t.gradeNameEn,
+        t.emissionsName,
+        t.transMission,
+        t.versionShortName,
+        t.versionShortNameEn,
+        t.bodyTypeNameEn,
+        t.versionLaunchDate,
+        t.port_type_id,
+        t.isBase,
+        t.modelSort,
+        <isEqual property="priceType" compareValue="1">
+        min(p.msrp)over(partition by p.ym,t.submodelId) minPrice,
+        max(p.msrp)over(partition by p.ym,t.submodelId) maxPrice,
+        p.msrp price
+        </isEqual>
+        <isEqual property="priceType" compareValue="2">
+        min(p.price_fawvw)over(partition by p.ym,t.submodelId) minPrice,
+        max(p.price_fawvw)over(partition by p.ym,t.submodelId) maxPrice,
+        p.price_fawvw price
+        </isEqual>
+   from full_time t
+      left join 
+    <isEqual property="priceType" compareValue="1">
+      fdm_version_state_msrp p
+        on t.ym = p.ym and t.vid = p.version_id
+      where p.msrp is not null
+        and p.msrp != 0.00
+    </isEqual>
+     <isEqual property="priceType" compareValue="2">
+      fdm_version_state_price p
+        on t.ym = p.ym and t.vid = p.version_id
+      where p.price_fawvw is not null
+        and p.price_fawvw != 0.00
+        and p.week = '7'
+    </isEqual>
+)
+</isNotEqual>
+<isEqual property="priceType" compareValue="3">
+price as (
+ select p.ym, 
+        t.vid, 
+        t.submodelId,
+        t.versionCode,
+        t.manfName,
+        t.manfNameEn,
+        t.subModelName,
+        t.subModelNameEn,
+        t.brandName,
+        t.brandNameEn,
+        t.gradeNameEn,
+        t.emissionsName,
+        t.transMission,
+        t.versionShortName,
+        t.versionShortNameEn,
+        t.bodyTypeNameEn,
+        t.versionLaunchDate,
+        t.isBase,
+        t.port_type_id,
+        t.modelSort,
+        min(m.msrp)over(partition by p.ym,t.submodelId) minMsrp,
+        max(m.msrp)over(partition by p.ym,t.submodelId) maxMsrp,
+        nvl(min(p.price_fawvw)over(partition by p.ym,t.submodelId),0) minTp,
+        nvl(max(p.price_fawvw)over(partition by p.ym,t.submodelId),0) maxTp,
+        m.msrp, 
+        nvl(p.price_fawvw,0) tp
+    from full_time t
+    left join fdm_version_state_price p
+      on t.ym = p.ym  and p.price_fawvw is not null
+     and p.price_fawvw != 0.00
+     and p.week = '7'
+     and t.vid = p.version_id
+    left join fdm_version_state_msrp m
+      on t.ym = m.ym
+     and t.vid = m.version_id
+   where m.msrp is not null
+     and m.msrp != 0.00
+    
+)
+</isEqual>
+<!-- 刷新图表的情况下车型顺序按页面顺序 -->
+<isEqual property="refreshType" compareValue="true">
+	, t as (
+     $sql$
+     )
+</isEqual>
+
+<isNotEqual property="priceType" compareValue="3">
+select a.*, to_char(dense_Rank() over (order by 
+<isEqual property="refreshType" compareValue="false">
+ minPrice,subModelName,subModelNameEn,subModelName||bodyTypeNameEn
+ </isEqual>
+ <isEqual property="refreshType" compareValue="true">
+ objsn
+ </isEqual>
+ ) - 0.75, 'fm9999990.00') sn
+</isNotEqual>
+ <isEqual property="priceType" compareValue="3">
+ select a.*, to_char(dense_Rank() over (order by  
+ <isEqual property="refreshType" compareValue="false">
+ minMsrp,subModelName,subModelNameEn,subModelName||bodyTypeNameEn
+ </isEqual>
+ <isEqual property="refreshType" compareValue="true">
+ objsn
+ </isEqual>
+ ) - 0.75, 'fm9999990.00') sn
+</isEqual>
+from (
+select distinct p.versionCode,
+       p.manfName,
+       p.manfNameEn,
+       p.subModelId,
+       p.subModelName||decode(p.port_type_id,1,'(进口)','') subModelName,
+       p.subModelNameEn||decode(p.port_type_id,1,'(FBU)','') subModelNameEn,
+       p.port_type_id,
+       p.brandName,
+       p.brandNameEn,
+       p.gradeNameEn,
+       p.emissionsName,
+       p.transMission,
+       p.versionShortName,
+       p.versionShortNameEn,
+       p.bodyTypeNameEn,
+       to_char(p.versionLaunchDate, 'yyyy-mm-dd') versionLaunchDate,
+       p.isBase,
+       p.modelSort,
+       <isNotEqual property="priceType" compareValue="3">
+       p.minPrice,
+       p.maxPrice,
+       p.price,
+       '' minMsrp,
+       '' maxMsrp,
+       '' minTp,
+       '' maxTp,
+       '' msrp,
+       '' tp
+         from price p 
+        ) a
+        <isEqual property="refreshType" compareValue="true">
+	inner join t on t.objid = a.submodelid
+	 order by objsn
+		</isEqual>
+		 <isEqual property="refreshType" compareValue="false">
+         <!-- order by isBase desc, modelSort, minPrice, subModelNameEn, price  -->
+          <!-- 20161209修改 为保持跟3.0一致的车型排序 -->
+    order by minPrice,subModelName,subModelNameEn,subModelName||bodyTypeNameEn
+    	</isEqual>
+       </isNotEqual>
+       <isEqual property="priceType" compareValue="3">
+        '' minPrice,
+        '' maxPrice,
+        '' price,
+        p.minMsrp,
+        p.maxMsrp,
+        p.minTp,
+        p.maxTp,
+        p.msrp,
+        p.tp
+         from price p 
+       ) a
+       <isEqual property="refreshType" compareValue="true">
+	inner join t on t.objid = a.submodelid
+	 order by objsn
+		</isEqual>
+		 <isEqual property="refreshType" compareValue="false">
+        <!-- 	order by isBase desc, modelSort, minMsrp, subModelNameEn, price  -->
+    <!-- 20161209修改 为保持跟3.0一致的车型排序 -->
+    order by minMsrp,subModelName,subModelNameEn,subModelName||bodyTypeNameEn
+    	</isEqual>
+    
+       </isEqual>
+</select>
+</sqlMap>

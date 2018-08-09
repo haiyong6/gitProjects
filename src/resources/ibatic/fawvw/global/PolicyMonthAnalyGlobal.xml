@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTD SQL Map 2.0//EN" "http://ibatis.apache.org/dtd/sql-map-2.dtd" >
+<sqlMap namespace="policyMonthAnalyGlobal">
+
+
+<!-- 根据条件获取有效车型公共SQL -->
+<sql id="getSubModelPolicy">
+		
+	<isEqual property="timeType" compareValue="1">		<!-- 时间点查询 -->
+		select distinct y.submodel_id submodelid from FDM_SUBMODEL_POLICY_MONTH y where y.ym between to_char(add_months(to_date('$beginDate$','YYYYMM'),-1),'YYYYMM') and '$beginDate$' 
+	</isEqual>
+	<isEqual property="timeType" compareValue="2">
+    	<!-- 时间段查询 -->
+	  select distinct y.submodel_id submodelid from FDM_SUBMODEL_POLICY_MONTH y where y.ym between '$beginDate$' and '$endDate$'
+	</isEqual>
+
+</sql>
+
+
+<!-- 获取本品子车型和其竟品车型 -->
+<resultMap class="com.ways.app.price.model.BPSubModel" id="getSubmodelByBpGroup1" groupBy="subModelId">
+	<result property="subModelId" column="subModelBpId" nullValue="" />
+	<result property="subModelName" column="subModelName" nullValue="" />
+	<result property="pooAttributeId" column="bp_car_in" nullValue="" />
+	<result property="jpSubModelList" resultMap="policyMonthAnalyGlobal.getSubmodelByBpGroup2" />
+</resultMap> 
+<resultMap class="com.ways.app.price.model.SubModel" id="getSubmodelByBpGroup2">
+	<result property="subModelId" column="subModelJpId" nullValue="" />
+	<result property="subModelName" column="subModelJpName" nullValue="" />
+	<result property="pooAttributeId" column="jp_car_in" nullValue="" />
+</resultMap>
+<select id="getSubmodelByBpPolicy" resultMap="getSubmodelByBpGroup1">
+
+	with t1 as(
+		<include refid="getSubModelPolicy"/>
+	)
+	<!-- select b.model_bp_id subModelBpId,c.name subModelName,g.parent_grade_id bp_car_in,b.model_jp_id subModelJpId,j.name subModelJpName,g.parent_grade_id jp_car_in
+	       from cims_model_bp_jp b
+  Inner Join cims_car_brandchild c
+    On c.id = b.model_bp_id
+ Inner Join faw_info_grade ig
+    On ig.brand_id = c.parent_id
+ Inner Join v_faw_grade g
+    On ig.grade_id = g.grade_id
+	       inner join cims_scs s on s.id = b.manf_bp_id
+	       left join cims_car_brandchild j on j.id = b.model_jp_id
+	       left join cims_scs js on js.id = b.manf_jp_id
+	       where b.userid= $userId$
+		         and exists (
+	              	 select 1 from t1 where t1.submodelid = b.model_bp_id
+	             )
+			     and exists (
+			         select 1 from t1 where t1.submodelid = b.model_jp_id
+			     )
+	       order by g.grade_order asc -->
+	       select b.bp_model_id     subModelBpId,
+       c.submodel_Name_cn            subModelName,
+       g.parent_grade_id bp_car_in,
+       b.jp_model_id    subModelJpId,
+       j.submodel_name_cn          subModelJpName,
+       g.parent_grade_id jp_car_in
+  from faw_vw.Fdm_Car_Bp_Jp b
+ Inner Join fdm_car_submodel c
+    On c.submodel_id = b.bp_model_id
+ Inner Join v_faw_info_grade ig
+    On ig.model_id = c.model_id
+ Inner Join v_faw_grade g
+    On ig.grade_id = g.grade_id
+ inner join fdm_car_manf s
+    on s.manf_id = b.bp_manf_id
+  left join fdm_car_submodel j
+    on j.submodel_id = b.jp_model_id
+  left join fdm_car_manf js
+    on js.manf_id = b.jp_manf_id
+ where g.group_id = 2
+   and exists (select 1 from t1 where t1.submodelid = b.bp_model_id)
+   and exists (select 1 from t1 where t1.submodelid = b.jp_model_id)
+ order by b.bp_model_sort
+</select>
+ 
+<!-- 获取细分市场下子车型关系 --> 
+<resultMap class="com.ways.app.price.model.Segment" id="getSubmodelBySegmentGroup1" groupBy="segmentId">
+	<result property="segmentId" column="parent_id" nullValue="" />
+	<result property="segmentName" column="parent_grade_name_cn" nullValue="" />
+	<result property="segmentList" resultMap="policyMonthAnalyGlobal.getSubmodelBySegmentGroup2" />
+</resultMap> 
+<resultMap class="com.ways.app.price.model.Segment" id="getSubmodelBySegmentGroup2" groupBy="segmentId">
+	<result property="segmentId" column="grade_id" nullValue="" />
+	<result property="segmentName" column="grade_name_cn" nullValue="" />
+	<result property="subModelList" resultMap="policyMonthAnalyGlobal.getSubmodelBySegmentGroup3" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.SubModel" id="getSubmodelBySegmentGroup3">
+	<result property="subModelId" column="submodelid" nullValue="" />
+	<result property="subModelName" column="submodelname" nullValue="" />
+	<result property="pooAttributeId" column="car_in" nullValue="" />
+</resultMap>
+<sql id="getUserGroupGradeSubModelPolicy">
+	with t1 as(
+		select d.*
+			  from (select distinct  g.GRADE_NAME_EN||'-'||g.sub_grade_name Grade_Id,
+                          g.GRADE_NAME_EN parent_grade_name_cn,
+                        
+                          g.sub_grade_name,
+                          g.parent_grade_name,
+                          g.GRADE_NAME_EN parent_id,
+                          g.GRADE_ORDER,
+                          
+                          g.GRADE_NAME_EN||'-'||g.sub_grade_name Grade_Name_Cn,
+                         
+                          b.submodel_id submodelid,
+                          b.submodel_name_cn submodelname,
+                        g.parent_grade_id Car_In,
+			               s.manf_id manfid,
+			               s.manf_name_cn manfName,
+			               p.brand_id brandid,
+			               p.brand_name_cn brandName,
+			               upper(getLetter(substr(p.brand_name_cn,0,1))) brandletter,
+               			   upper(getLetter(substr(s.manf_name_cn,0,1))) manfletter
+			          from v_faw_grade g
+           inner join v_faw_info_grade i on g.grade_id = i.grade_id
+			         inner join fdm_car_submodel b on b.model_id = i.model_id
+			         inner join fdm_car_manf s on s.manf_id = b.manf_id
+			         inner join fdm_car_brand p on p.brand_id = b.brand_id
+			         <!-- inner join cims_car_brandchild c on c.parent_id = b.id -->
+			         where g.group_id = $userId$
+			  ) d
+			 ,(
+			 		<include refid="getSubModelPolicy"/>
+			  ) c 
+			  where c.submodelid = d.submodelid
+	)
+</sql>
+<select id="getSubmodelBySegmentPolicy" resultMap="getSubmodelBySegmentGroup1">
+	<include refid="getUserGroupGradeSubModelPolicy"/>
+	<!-- select d.*,g.grade_name_cn parent_grade_name_cn
+	       	from t1 d ,wias_grade g 
+	       	where g.grade_id(+) = d.parent_id
+	        order by g.grade_id,d.submodelid -->
+	        select d.* from t1 d order by d.GRADE_ORDER
+</select>
+
+<!-- 获取品牌下子车型关系 -->
+<resultMap class="com.ways.app.price.model.LetterObj" id="getSubmodelByBrandGroup1" groupBy="letter">
+	<result property="letter" column="brandletter" nullValue="" />
+	<result property="objList" resultMap="policyMonthAnalyGlobal.getSubmodelByBrandGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.Brand" id="getSubmodelByBrandGroup2" groupBy="brandId">
+	<result property="brandId" column="brandid" nullValue="" />
+	<result property="brandName" column="brandname" nullValue="" />
+	<result property="subModelList" resultMap="policyMonthAnalyGlobal.getSubmodelByBrandGroup3" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.SubModel" id="getSubmodelByBrandGroup3">
+	<result property="subModelId" column="submodelid" nullValue="" />
+	<result property="subModelName" column="submodelname" nullValue="" />
+	<result property="pooAttributeId" column="car_in" nullValue="" />
+</resultMap>
+<select id="getSubmodelByBrandPolicy" resultMap="getSubmodelByBrandGroup1">
+
+	<include refid="getUserGroupGradeSubModelPolicy"/>			
+	select * from t1 order by t1.brandletter,t1.brandId,t1.submodelid
+</select>
+
+<!-- 获取厂商 下子车型关系 -->
+<resultMap class="com.ways.app.price.model.LetterObj" id="getSubmodelByManfGroup1" groupBy="letter">
+	<result property="letter" column="manfletter" nullValue="" />
+	<result property="objList" resultMap="policyMonthAnalyGlobal.getSubmodelByManfGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.Manf" id="getSubmodelByManfGroup2" groupBy="manfId">
+	<result property="manfId" column="manfid" nullValue="" />
+	<result property="manfName" column="manfname" nullValue="" />
+	<result property="subModelList" resultMap="policyMonthAnalyGlobal.getSubmodelByManfGroup3" />
+</resultMap>
+<resultMap class="com.ways.app.price.model.SubModel" id="getSubmodelByManfGroup3">
+	<result property="subModelId" column="submodelid" nullValue="" />
+	<result property="subModelName" column="submodelname" nullValue="" />
+	<result property="pooAttributeId" column="car_in" nullValue="" />
+</resultMap>
+<select id="getSubmodelByManfPolicy" resultMap="getSubmodelByManfGroup1">
+
+	<include refid="getUserGroupGradeSubModelPolicy"/>			
+	select * from t1 order by t1.manfletter,t1.manfid,t1.submodelid
+</select>
+ 
+</sqlMap>

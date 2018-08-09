@@ -1,0 +1,489 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTD SQL Map 2.0//EN" "http://ibatis.apache.org/dtd/sql-map-2.dtd" >
+<sqlMap namespace="ploicyMonthAnaly">
+
+<!-- 初始化时间，从用户购买数据表取 -->
+<select id="initDate" resultClass="java.util.HashMap">
+
+select beginDate,endDate,to_char(add_months(to_date(enddate,'YYYY-MM'),-11),'YYYY-MM') defaultBegindate from(
+	with t1 as(
+		Select Min(A.ym) As begindate,Max(A.ym) As enddate  From fdm_version_policy_month a Where A.ym != 0
+	)
+	 select 
+	 	   <![CDATA[
+	       case when g.sdate < t1.begindate then to_char(to_date(t1.begindate,'YYYY-MM'),'YYYY-MM') else to_char(to_date(substr(g.sdate,0,6),'YYYY-MM'),'YYYY-MM') end begindate
+	       ,case when g.edate > t1.enddate then to_char(to_date(t1.enddate,'YYYY-MM'),'YYYY-MM') else to_char(to_date(substr(g.edate,0,6),'YYYY-MM'),'YYYY-MM') end enddate
+	       ]]>
+	       from fdm_user_purchaser_module_date g 
+	       full join t1 on 1=1
+	       where g.group_id=$userId$ and g.module='businesspolicy' )
+</select>
+
+
+<!-- 获取子车型政策简单表格查询 -->
+<!-- <resultMap class="com.ways.app.policy.model.PolicySubModelInfo" id="getSimplePolicyGroup1" groupBy="subModelId">
+	<result property="subModelId" column="subModelId" />
+	<result property="subModelName" column="name" />
+	<result property="policyList" resultMap="ploicyMonthAnaly.getSimplePolicyGroup2" />
+</resultMap>
+<resultMap class="com.ways.app.policy.model.PolicyInfo" id="getSimplePolicyGroup2">
+	<result property="policyName" column="policyName" />
+	<result property="policyContent" column="content" />
+	<result property="policyLastMonthContent" column="scontent" />
+</resultMap>
+<select id="getSubModelPolicyToSimple" resultMap="getSimplePolicyGroup1">
+	select d.*,m.name 
+	       from (
+	            select 
+	            	 distinct
+	                 decode(a.third_type_id,null,b.third_type_id,a.third_type_id) level3_id,
+	                 decode(a.policy_name,null,b.policy_name,a.policy_name) policyname,
+	                 decode(a.sub_model_id,null,b.sub_model_id,a.sub_model_id) submodelid,
+	                 nvl(a.policy_content,'无') content,nvl(b.policy_content,'无') scontent       
+	                 from (
+	                      本月政策内宅
+	                      select distinct b.year_month,b.third_type_id,b.policy_name,b.policy_content,b.sub_model_id
+	                             from tb_policy_month_analy b
+	                             where b.sub_model_id in($modelIds$) and b.year_month = '$beginDate$'
+	                 )a
+	                 full join (
+	                      上月政策内容
+	                      select distinct b.third_type_id,b.policy_name,b.policy_content,b.sub_model_id
+	                             from tb_policy_month_analy b
+	                             where b.sub_model_id in($modelIds$) 
+	                             and b.year_month = to_char(add_months(to_date('$beginDate$','YYYYMM'),-1),'YYYYMM')
+	                 )b on a.third_type_id = b.third_type_id and a.sub_model_id = b.sub_model_id and a.policy_name = b.policy_name
+	       )d
+	       inner join cims_car_brandchild m on m.id = d.submodelid
+	       order by m.id,d.policyname
+</select> -->
+
+<!-- 获取子车型政策明细表格查询 -->
+<!-- <resultMap class="com.ways.app.policy.model.PolicyHierarchy" id="getPolicyDataGroup1" groupBy="id">
+	<result property="id" column="level1_id"/>
+	<result property="name" column="level1_name"/>
+	<result property="count" column="count1"/>
+	<result property="childrenPolicyList" resultMap="ploicyMonthAnaly.getPolicyDataGroup2"/>
+</resultMap>
+<resultMap class="com.ways.app.policy.model.PolicyHierarchy" id="getPolicyDataGroup2" groupBy="id">
+	<result property="id" column="level2_id"/>
+	<result property="name" column="level2_name"/>
+	<result property="count" column="count2"/>
+	<result property="childrenPolicyList" resultMap="ploicyMonthAnaly.getPolicyDataGroup3"/>
+</resultMap>
+<resultMap class="com.ways.app.policy.model.PolicyHierarchy" id="getPolicyDataGroup3" groupBy="id">
+	<result property="id" column="level3_id"/>
+	<result property="name" column="level3_name"/>
+	<result property="modelNameList" resultMap="ploicyMonthAnaly.getPolicyDataGroup4"/>
+	<result property="policyValueList" resultMap="ploicyMonthAnaly.getPolicyDataGroup5"/>
+	<result property="policyMsrp" resultMap="ploicyMonthAnaly.getPolicyDataGroup6"/>
+</resultMap>
+<resultMap class="com.ways.app.policy.model.PolicyValue" id="getPolicyDataGroup4">
+	<result property="value" column="subModelName"/>
+</resultMap>
+<resultMap class="com.ways.app.policy.model.PolicyValue" id="getPolicyDataGroup5">
+	<result property="value" column="policyData"/>
+</resultMap>
+<resultMap class="com.ways.app.policy.model.PolicyValue" id="getPolicyDataGroup6">
+	<result property="value" column="msrp"/>
+</resultMap>
+
+<select id="getSubModelPolicyToDetailed" resultMap="getPolicyDataGroup1">
+	with t1 as(  
+		获取车型政策数据，如果一个第三层政策下有多个政策名称，则进行合并       
+	    select distinct
+	           a.third_type_id,a.sub_model_id,
+	           wm_concat(a.policydata) over(partition by a.third_type_id,a.sub_model_id) policydata
+	            from (
+	                  select distinct b.third_type_id,b.sub_model_id,   to_char(b.policy_name||b.policy_content) policydata
+	                         from tb_policy_month_analy b
+	                         where b.sub_model_id in($modelIds$) and b.year_month = '$beginDate$'
+	            )a
+	)
+	,t2 as(
+	   select c.id sub_model_id,c.name submodelname,a.level3_id,b.msrp
+	          from (
+	               select distinct t1.third_type_id level3_id from t1
+	          )a
+	          full join cims_car_brandchild c on 1 = 1
+	          left join(
+	              select c.fzdy2,to_char(min(direction_price) * 10000) || '-' || to_char(max(direction_price) * 10000) msrp
+	                     from cims_direction_price m
+	                     inner join cims_car_number c on c.id = m.car_name
+	                     where to_char(m.msrp_adjust_date, 'YYYYMM') = '$beginDate$' and c.fzdy2 in($modelIds$)
+	                     group by c.fzdy2
+	          )b on c.id = b.fzdy2
+	          where c.id in($modelIds$)
+	)
+	,t3 as(
+	    select a.id level1_id,a.type_name level1_name,a.sort_num sort1,
+	       b.id level2_id,b.type_name level2_name,b.sort_num sort2,
+	       c.id level3_id,c.type_name level3_name,c.sort_num sort3,
+	       t2.sub_model_id,t2.submodelname,t2.msrp
+	       from (
+	            一级政策
+	            select t.* from tb_policy_month_analy_type t where t.type_level = 1 
+	       ) a
+	       inner join (
+	            二级政策
+	            select t.* from tb_policy_month_analy_type t where t.type_level = 2 
+	       ) b on a.id = b.pid
+	       inner join (
+	            三级政策
+	            select t.* from tb_policy_month_analy_type t where t.type_level = 3 
+	       ) c on b.id = c.pid
+	       inner join t2 on t2.level3_id = c.id
+	)
+	 select t3.*,nvl(t1.policydata,'-') policydata,
+	 		count(*) over(partition by t3.level1_id) count1,
+        	count(*) over(partition by t3.level2_id) count2
+	        from t3
+	        left join t1 on t3.sub_model_id = t1.sub_model_id and t3.level3_id = t1.third_type_id
+	        order by t3.sort1,t3.sort2,t3.level3_id,t3.sub_model_id
+</select>
+
+按月获取子车型政策数据查询
+<select id="getSubModelPolicyByMonth" resultMap="getPolicyDataGroup1">
+	with t1 as(    
+      select distinct
+             a.third_type_id,a.year_month,
+             wm_concat(a.policydata) over(partition by a.third_type_id,a.year_month) policydata
+              from (
+                    select distinct b.third_type_id,b.year_month,to_char(b.policy_name||b.policy_content) policydata
+                           from tb_policy_month_analy b
+                           where b.sub_model_id = '$modelIds$' and b.year_month between '$beginDate$' and '$endDate$'
+              )a
+	 )
+	 ,t2 as(
+	     select to_char(c.year || lpad(c.month_id,2,0)) yearmonth ,a.level3_id,b.msrp
+	            from (
+	                 select distinct t1.third_type_id level3_id from t1
+	            )a
+	            full join pms_date_main c on 1 = 1
+	            left join(
+	                select to_char(m.msrp_adjust_date, 'YYYYMM') yearmonth,
+	                       to_char(min(direction_price) * 10000) || '-' || to_char(max(direction_price) * 10000) msrp
+	                       from cims_direction_price m
+	                       inner join cims_car_number c on c.id = m.car_name
+	                       where to_char(m.msrp_adjust_date, 'YYYYMM')between '$beginDate$' and '$endDate$' and c.fzdy2 = '$modelIds$'
+	                       group by c.fzdy2,to_char(m.msrp_adjust_date, 'YYYYMM')
+	            )b on to_char(c.year || lpad(c.month_id,2,0)) = b.yearmonth
+	            where to_char(c.year || lpad(c.month_id,2,0)) between '$beginDate$' and '$endDate$'
+	  )
+	  ,t3 as(
+	      select a.id level1_id,a.type_name level1_name,a.sort_num sort1,
+		         b.id level2_id,b.type_name level2_name,b.sort_num sort2,
+		         c.id level3_id,c.type_name level3_name,c.sort_num sort3,
+		         t2.yearmonth subModelName,t2.msrp
+		         from (
+		              select t.* from tb_policy_month_analy_type t where t.type_level = 1 
+		         ) a
+		         inner join (
+		              select t.* from tb_policy_month_analy_type t where t.type_level = 2 
+		         ) b on a.id = b.pid
+		         inner join (
+		              select t.* from tb_policy_month_analy_type t where t.type_level = 3 
+		         ) c on b.id = c.pid
+		         inner join t2 on t2.level3_id = c.id
+	  )
+	   select t3.*,nvl(t1.policydata,'-') policydata,
+	          count(*) over(partition by t3.level1_id) count1,
+	          count(*) over(partition by t3.level2_id) count2
+	          from t3
+	          left join t1 on t3.subModelName = t1.year_month and t3.level3_id = t1.third_type_id
+	          order by t3.sort1,t3.sort2,t3.level3_id,t3.subModelName
+</select>
+ -->
+<select id="checkPopBoxData" resultClass="com.ways.app.price.model.SubModel">
+   select distinct n.submodel_id submodelid  from fdm_submodel_policy_month n where
+not exists (
+select 1 from fdm_submodel_policy_month y
+   where y.ym = '$beginDate$'
+        and y.submodel_id = n.submodel_id 
+   )
+</select>
+
+
+<!-- 获取子车型政策简单表格查询 -->
+<resultMap class="com.ways.app.policy.model.PolicyMonthInfoEntity" id="getPolicyDataGroupDetail" groupBy="submodelId,ym">
+	<result property="submodelId" column="subModelId"/>
+	<result property="submodelName" column="subModelName"/>
+	<result property="ym" column="ym"></result>
+	<result property="policyList" resultMap="ploicyMonthAnaly.getPolicyDataGroupDetail2"/>
+</resultMap>
+<resultMap class="com.ways.app.policy.model.PolicyListEntity" id="getPolicyDataGroupDetail2">
+	<result property="subsidyTypeId" column="subsidyTypeId"/>
+	<result property="policyName" column="policyName"/>
+	<result property="policyContent" column="policyContent"/>
+	<result property="reward" column="reward" />
+	<result property="rewardTotal" column="rewardTotal"/>
+</resultMap>
+
+<select id="detail" resultMap="getPolicyDataGroupDetail">
+<!-- /*车型mix*/ -->
+with t1 as
+ (select s.year || lpad(s.month, 2, 0) yearmonth,
+         s.version_id versionid,
+         s.sub_model_id objid,
+         s.version_sale sales,
+         sum(s.version_sale) over(partition by s.year || lpad(s.month, 2, 0), s.sub_model_id) totalSales
+    from fdm_version_sales s
+   where s.sub_model_id in ($modelIds$)
+     and s.year || lpad(s.month, 2, 0) between to_char(add_months(to_date(replace('$beginDate$', '-', ''), 'YYYYMM'), -1),'YYYYMM') and replace('$endDate$','-','')),
+<!-- /**各车型下型号固定月份固定型号id固定subsidy_type_id 固定policy_name下的reward**/ -->
+t2 as
+ (select d.ym ,
+         d.submodel_id,
+         d.subsidy_type_id,
+         d.policy_name,
+         round(sum(d.reward)) reward
+    from (select p.ym,
+                 p.version_id versionid,
+                 v.submodel_id,
+                 p.subsidy_type_id,
+                 p.policy_name,
+                 p.policy_content,
+                 p.reward * t1.sales / t1.totalSales reward
+            from fdm_version_policy_month p
+           inner join fdm_car_version v
+              on v.version_id = p.version_id
+           inner join t1
+              on to_char(add_months(to_date(t1.yearmonth,'YYYYMM'),1),'YYYYMM') = p.ym
+             and t1.versionid = p.version_id
+           where p.ym between replace('$beginDate$','-','') and replace('$endDate$','-','')
+             and v.submodel_id in ($modelIds$)
+              and p.subsidy_type_id != 15 
+             ) d
+   group by d.ym ,
+            d.submodel_id,
+            d.subsidy_type_id,
+            d.policy_name
+  
+  ),
+<!-- /**固定月份固定车型reward的总和**/ -->
+t3 as
+ (select g.ym, g.submodel_id, sum(g.reward) reward
+    from (select fpm.ym,
+                 fpm.submodel_id,
+                 fpm.subsidy_type_id,
+                 fpm.policy_name,
+                 fpm.policy_content,
+                 sum(t2.reward) over(partition by fpm.ym, fpm.submodel_id, fpm.subsidy_type_id, fpm.policy_name) reward
+            from fdm_submodel_policy_month fpm
+           inner join t2
+              on t2.ym = fpm.ym
+             and t2.submodel_id = fpm.submodel_id
+             and t2.subsidy_type_id = fpm.subsidy_type_id
+             and t2.policy_name = fpm.policy_name
+           where fpm.ym between replace('$beginDate$','-','') and replace('$endDate$','-','')
+             and fpm.submodel_id in ($modelIds$)
+           order by fpm.ym, fpm.submodel_id, fpm.subsidy_type_id
+           ) g
+   group by g.ym, g.submodel_id)
+   
+   <!-- 临时补数表 -->
+    ,
+   t4 as (
+      select d.*,fdm.yearmonth ym from (
+      select distinct f.policy_name policyName,f.submodel_id submodelid,
+      s.submodel_name_cn submodelName,
+      s.submodel_name_en submodelNameEn,
+      f.subsidy_type_id subsidytypeid
+      from fdm_submodel_policy_month f
+      inner join fdm_car_submodel s on s.submodel_id = f.submodel_id
+      where f.ym between replace('$beginDate$', '-', '') and
+                 replace('$endDate$', '-', '')
+                 and f.submodel_id in ($modelIds$)
+                 order by f.submodel_id,f.subsidy_type_id
+                 ) d ,fdm_date_main fdm
+                 where fdm.yearmonth between  replace('$beginDate$', '-', '') and
+                 replace('$endDate$', '-', '')
+   )
+<!-- /**固定月份固定车型固定subsidy_type_id固定policy_name下的促销**/ -->
+select t4.ym,
+       t4.submodelid,
+       t4.subsidytypeid,
+       t4.submodelname,
+       t4.submodelnameen,
+       t4.policyname,
+       d.policycontent,
+       d.reward,
+       d.rewardTotal
+  from t4
+  left join (
+select fpm.ym,
+       fpm.submodel_id submodelid,
+       fpm.subsidy_type_id subsidytypeid,
+       fcs.submodel_name_cn submodelname,
+       fcs.submodel_name_en submodelnameen,
+       fpm.policy_name policyname,
+       fpm.policy_content policycontent,
+       sum(t2.reward) over(partition by fpm.ym, fpm.submodel_id, fpm.subsidy_type_id, fpm.policy_name) reward,
+       t3.reward rewardTotal
+  from fdm_submodel_policy_month fpm
+ left join t2
+    on t2.ym = fpm.ym
+   and t2.submodel_id = fpm.submodel_id
+   and t2.subsidy_type_id=fpm.subsidy_type_id
+   and t2.policy_name = fpm.policy_name
+ left join t3
+    on t3.ym = fpm.ym
+   and t3.submodel_id = fpm.submodel_id
+ inner join fdm_car_submodel fcs on fcs.submodel_id = fpm.submodel_id
+ where fpm.ym between replace('$beginDate$','-','') and replace('$endDate$','-','')
+   and fpm.submodel_id in ($modelIds$)
+ order by  fpm.submodel_id,fpm.ym, fpm.subsidy_type_id
+	) d
+	on t4.submodelid = d.submodelid
+   and t4.subsidytypeid = d.subsidytypeid
+   and t4.policyname = d.policyname
+   and t4.ym = d.ym
+ order by t4.submodelid, t4.ym, t4.subsidytypeid,t4.policyname
+</select>
+
+<select id="submodelQuery" resultClass="com.ways.app.policy.model.PolicySubmodelEntity">
+	With Version As (
+Select v.VERSION_ID Vid,
+                                        v.VERSION_ID,
+                                        v.VERSION_NAME_CN Versionname,
+                                        v.VERSION_NAME_EN VersionNameEn,
+                                        v.VERSION_CODE Versioncode,
+                                        v.YEAR Modelyear,
+                                        v.on_product,
+                                        v.halt_product_date,
+                                        v.halt_no_sale_date,
+                                        v.on_sale,
+                                        v.launch_date,
+                                        v.parentId,
+                                        b.SUBMODEL_NAME_EN || ' ' ||
+                                        v.VERSION_TRIM_NAME_EN Versionchartname,
+                                        v.VERSION_TRIM_NAME_EN,
+                                        v.version_short_name_cn versionShortName,
+                                        v.version_short_name_en versionShortNameEn,
+                                        to_char(v.LAUNCH_DATE, 'YYYY-MM-DD') Versionlaunchdate,
+                                        v.VERSION_TRIM_NAME_CN Typeid,
+                                        v.VERSION_TRIM_NAME_EN Typeiden,
+                                        v.ORIGINAL_VERSION_ID o_car_number_id,
+                                        v.is_installed_flag,
+                                        b.SUBMODEL_ID ObjId,
+                                        b.SUBMODEL_NAME_CN objName,
+                                        b.SUBMODEL_NAME_EN objNameEn,
+                                        s.ID manfId,
+                                        s.manf_name_cn Manfname,
+                                        s.manf_name_en Manfnameen,
+                                        b.SUBMODEL_ID SubModelId,
+                                        b.SUBMODEL_NAME_CN Submodelname,
+                                        b.SUBMODEL_NAME_EN Submodelnameen,
+                                       
+                                        Case
+                                          When t.brand_id = 31 And
+                                               s.manf_id = 109 Then
+                                           '1'
+                                          Else
+                                           '0'
+                                        End isBase,
+                                        t.BRAND_ID brandId,
+                                        t.BRAND_NAME_CN brandName,
+                                        t.BRAND_NAME_EN brandNameEn
+                                   from FDM_CAR_VERSION v
+                                  Inner join FDM_CAR_SUBMODEL b
+                                     on b.SUBMODEL_ID = v.SUBMODEL_ID
+                                  Inner join fdm_car_brand t
+                                     on t.brand_id = v.brand_id
+                                  Inner join v_car_manf_brand s
+                                     on s.manf_id = v.manf_id
+                                    and s.brand_id = v.brand_id
+                                  
+                                  Where 1 = 1
+                                    And b.SUBMODEL_ID in ($modelIds$)),
+<!-- /*车型mix*/ -->
+t1 as
+ (select s.year || lpad(s.month, 2, 0) yearmonth,
+         s.version_id versionid,
+         s.sub_model_id objid,
+         s.version_sale sales,
+         sum(s.version_sale) over(partition by s.year || lpad(s.month, 2, 0), s.sub_model_id) totalSales
+    from fdm_version_sales s
+   where s.sub_model_id in ($modelIds$)
+     and s.year || lpad(s.month, 2, 0) between to_char(add_months(to_date(replace('$beginDate$', '-', ''), 'YYYYMM'), -1),'YYYYMM') and replace('$endDate$','-','')),
+<!-- /**各车型下型号固定月份固定型号id固定subsidy_type_id 固定policy_name下的reward**/ -->
+t2 as
+ (select d.ym ,
+         d.submodel_id,
+         d.subsidy_type_id,
+         d.policy_name,
+         sum(d.reward) reward
+    from (select p.ym,
+                 p.version_id versionid,
+                 v.submodel_id,
+                 p.subsidy_type_id,
+                 p.policy_name,
+                 p.policy_content,
+                 round(p.reward * t1.sales / t1.totalSales) reward
+            from fdm_version_policy_month p
+           inner join fdm_car_version v
+              on v.version_id = p.version_id
+           inner join t1
+              on to_char(add_months(to_date(t1.yearmonth,'YYYYMM'),1),'YYYYMM') = p.ym
+             and t1.versionid = p.version_id
+           where p.ym between replace('$beginDate$','-','') and replace('$endDate$','-','')
+             and v.submodel_id in ($modelIds$)) d
+   group by d.ym ,
+            d.submodel_id,
+            d.subsidy_type_id,
+            d.policy_name
+  
+  ),
+<!-- /**固定月份固定车型reward的总和**/ -->
+t3 as
+ (select g.ym, g.submodel_id, sum(g.reward) reward
+    from (select fpm.ym,
+                 fpm.submodel_id,
+                 fpm.subsidy_type_id,
+                 fpm.policy_name,
+                 fpm.policy_content,
+                 sum(t2.reward) over(partition by fpm.ym, fpm.submodel_id, fpm.subsidy_type_id, fpm.policy_name) reward
+            from fdm_submodel_policy_month fpm
+           inner join t2
+              on t2.ym = fpm.ym
+             and t2.submodel_id = fpm.submodel_id
+             and t2.subsidy_type_id = fpm.subsidy_type_id
+             and t2.policy_name = fpm.policy_name
+           where fpm.ym between replace('$beginDate$','-','') and replace('$endDate$','-','')
+             and fpm.submodel_id in ($modelIds$)
+           order by fpm.ym, fpm.submodel_id, fpm.subsidy_type_id
+           ) g
+   group by g.ym, g.submodel_id)
+<!-- /**固定月份固定车型固定subsidy_type_id固定policy_name下的促销**/ -->
+select distinct <!-- fpm.ym, -->
+       fpm.submodel_id submodelid,
+        v.isbase,
+     <!--   fpm.subsidy_type_id subsidytypeid, -->
+       fcs.submodel_name_cn submodelname
+      <!--  fcs.submodel_name_en submodelnameen,
+       fpm.policy_name policyname,
+       fpm.policy_content policycontent,
+       sum(t2.reward) over(partition by fpm.ym, fpm.submodel_id, fpm.subsidy_type_id, fpm.policy_name) reward,
+       t3.reward rewardTotal -->
+  from fdm_submodel_policy_month fpm
+  inner join version v on v.submodelid=fpm.submodel_id 
+ inner join t2
+    on t2.ym = fpm.ym
+   and t2.submodel_id = fpm.submodel_id
+ inner join t3
+    on t3.ym = fpm.ym
+   and t3.submodel_id = fpm.submodel_id
+   and t2.subsidy_type_id = fpm.subsidy_type_id
+   and t2.policy_name = fpm.policy_name
+ inner join fdm_car_submodel fcs on fcs.submodel_id = fpm.submodel_id
+ where fpm.ym between replace('$beginDate$','-','') and replace('$endDate$','-','')
+   and fpm.submodel_id in ($modelIds$)
+   <!--本品在前，其他按拼音音序排列  -->
+order by v.isbase desc ,NLSSORT(fcs.submodel_name_cn,'NLS_SORT =SCHINESE_PINYIN_M')  
+</select>
+
+<select id="yearMonthQuery" resultClass="java.util.HashMap">
+select distinct yearmonth ym from fdm_date_main where yearmonth
+ between replace('$beginDate$','-','') and replace('$endDate$','-','') order by yearmonth
+</select>
+</sqlMap>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTD SQL Map 2.0//EN" "http://ibatis.apache.org/dtd/sql-map-2.dtd" >
+<sqlMap namespace="moduleLog">
+
+	<!-- 添加日志 -->
+	<insert id="addModuleLog" >
+		 insert into faw_module_log values('$userId$','$userName$',to_char(sysdate,'YYYY-MM-dd HH24:mi:ss'),'','$moduleName$',
+		 		'$browser$','$ipAddress$','','$queryCondition$','','$loginId$')
+	</insert>
+	
+	<update id="updateModuleLog" >
+		 update faw_module_log l set l.exportsize = '$exportSize$' where l.userid = '$loginId$' 
+		 		and l.operatedate = ( select max(f.operatedate) from faw_module_log f where f.userid = '$loginId$' )
+	</update>
+</sqlMap>

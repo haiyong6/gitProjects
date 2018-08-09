@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTD SQL Map 2.0//EN" "http://ibatis.apache.org/dtd/sql-map-2.dtd" >
+<sqlMap namespace="configVersion">
+
+<!-- 获取型号信息公共SQL，作用于导出 -->
+<sql id="getVersionInfo">
+	select 
+		   distinct
+	       v.id versionid,
+	       v.sm versionName,
+	       v.car_config_bm versioncode,
+	       v.fyear modelyear,
+	       to_char(v.fzdy6,'YYYY-MM-DD') versionLaunchDate,
+	       v.typeid,
+	       v.typeideng typeiden,
+	       s.scs manfname,
+	       upper(getLetter(substr(s.scs,0,1))) manfletter,
+	       s.scs_eng manfnameen,
+	       b.name submodelname,
+	       b.name_eng submodelnameen,
+	       pl.pl discharge,
+	       pd.sm gearmode,
+	       <!-- 如果是大众和奥迪品牌的型号，需要将DCT转换为DSG -->
+	       case when v.pbrandid in(5,19) and pd.smeng = 'DCT' then 'DSG'
+	       else pd.smeng end gearmodeen,
+	       cs.lxeng bodytype,
+	       cs.lxeng bodytypeen,
+	      wg.PARENT_GRADE_NAME||' '||wg.GRADE_NAME_EN||'-'||wg.SUB_GRADE_NAME gradename,
+      	 wg.PARENT_GRADE_NAME||' '||wg.GRADE_NAME_EN||'-'||wg.SUB_GRADE_NAME gradenameen,
+	       wg.grade_order
+	       from cims_car_number v 
+	       inner join cims_car_brandchild b on b.id = v.fzdy2
+	       inner join cims_brand_hathback h on b.id = h.brand_id
+	       inner join pms_car_hatchback cs on cs.id = h.hatchback 	       
+	       inner join cims_scs s on s.id = v.scs       
+	       inner join cims_car_pl pl on pl.id = v.pl
+	       inner join cims_car_pdfs pd on pd.id = v.pdfs	       
+	      inner join faw_info_grade g
+      on g.brand_id = b.parent_id
+   inner join v_faw_grade wg
+      on wg.grade_id = g.grade_id
+     and wg.group_id= $userId$
+	       <!-- 取在产型号 -->
+	       where v.onsale = 1 and v.is_installed_flag != 1
+	       <isNotEmpty property="mids">
+	       		 and v.fzdy2 in($mids$)
+	       </isNotEmpty>
+	       <!-- 取车身形式 -->
+	       <isNotEmpty property="subModelBodyType">
+	       		and exists (select 1 from cims_brand_hathback c where c.hatchback in($subModelBodyType$) and c.brand_id = v.fzdy2)
+	       </isNotEmpty>
+</sql>
+
+<!-- 加载配置型号结果集  -->
+<select id="getConfigVersionResult" resultClass="com.ways.app.product.model.ProductVersionEntity">
+	with t1 as(
+		<include refid="getVersionInfo"/>
+	)
+	select b.*,c.msrp,d.mix
+			from(
+					<!-- 装备配置的型号 -->
+					select e0.car_config_id vid 
+							from $whereSQL$ group by e0.car_config_id <!-- having count(*) = $configLength$ -->
+			)a
+			inner join t1 b on a.vid = b.versionid <!-- 型号基础信息，只要作用于导出 -->
+			inner join(
+				<!-- 取最新指导价 -->
+				select distinct 
+				       p.car_name vid,
+				       first_value(p.direction_price * 10000) over(partition by p.car_name order by p.msrp_adjust_date desc) msrp 
+				       from cims_direction_price p
+				       where 1 = 1
+				       <isNotEmpty property="beginPrice">
+				       		 and to_char(p.direction_price) <![CDATA[ >= ]]> $beginPrice$
+				       </isNotEmpty>
+				       <isNotEmpty property="endPrice">
+				       		 and to_char(p.direction_price) <![CDATA[ < ]]> $endPrice$
+				       </isNotEmpty>
+				
+			)c on a.vid = c.vid
+			left join (
+				<!-- 取最新MIX -->
+				select distinct 
+					   m.car_config_id vid,
+				       first_value(to_char(m.endpercent * 100,'fm99999990.00')) over(partition by m.car_config_id order by m.currentdate desc) mix
+				       from sale_scale m
+			)d on a.vid = d.vid
+			order by b.grade_order,b.manfletter,b.submodelname,b.modelyear desc,c.msrp 
+		
+</select>
+
+</sqlMap>
